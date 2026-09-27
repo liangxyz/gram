@@ -9,20 +9,15 @@ jobs:
 
   windows:
     name: Windows
-    runs-on: ${{ matrix.arch == 'arm64' && 'windows-11-arm' || 'avrea-windows-2025-8-vcpu' }}
+    runs-on: windows-latest
     permissions:
       contents: write
 
     strategy:
       matrix:
-        arch: [x64, arm64]
-        qt: ["", qt6]
+        arch: [x64]
+        qt: [""]
         generator: ["Ninja Multi-Config"]
-        exclude:
-          - arch: arm64
-            qt: ""
-          - arch: x64
-            qt: qt6
 
     env:
       UPLOAD_ARTIFACT: "true"
@@ -36,12 +31,8 @@ jobs:
     steps:
       - name: Prepare directories.
         run: |
-          if "${{ matrix.arch }}"=="x64" (
-            if exist "D:\" (
-              set "TBUILD_TARGET=D:\TBuild"
-            ) else (
-              set "TBUILD_TARGET=%userprofile%\TBuild"
-            )
+          if exist "D:\" (
+            set "TBUILD_TARGET=D:\TBuild"
           ) else (
             set "TBUILD_TARGET=%userprofile%\TBuild"
           )
@@ -49,7 +40,7 @@ jobs:
           if not exist "%TBUILD_TARGET%\tmp" mkdir "%TBUILD_TARGET%\tmp"
           mklink /d "%GITHUB_WORKSPACE%\TBuild" "%TBUILD_TARGET%"
           echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
-          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries${{ matrix.arch == 'x64' && '\win64' || '' }}>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
           echo TEMP=%TBUILD_TARGET%\tmp>>%GITHUB_ENV%
           echo TMP=%TBUILD_TARGET%\tmp>>%GITHUB_ENV%
           echo TMPDIR=%TBUILD_TARGET%\tmp>>%GITHUB_ENV%
@@ -82,26 +73,12 @@ jobs:
           git config --global user.email "you@example.com"
           git config --global user.name "Sample"
 
-      - name: Install VS 2026 Build Tools.
-        if: matrix.arch == 'arm64'
-        shell: pwsh
-        run: |
-          $exe = Join-Path $env:RUNNER_TEMP 'vs_buildtools.exe'
-          Invoke-WebRequest -Uri https://aka.ms/vs/18/stable/vs_buildtools.exe -OutFile $exe
-          $p = Start-Process -FilePath $exe -Wait -PassThru -ArgumentList `
-            '--quiet','--wait','--norestart','--nocache', `
-            '--add','Microsoft.VisualStudio.Workload.VCTools', `
-            '--add','Microsoft.VisualStudio.Component.VC.Tools.ARM64', `
-            '--add','Microsoft.VisualStudio.Component.VC.ATL.ARM64'
-          Remove-Item $exe -Force -ErrorAction SilentlyContinue
-          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
-
       - uses: Eden-CI/msvc-dev-cmd@master
         name: Native Tools Command Prompt.
         with:
           arch: ${{ matrix.arch }}
           sdk: ${{ env.SDK }}
-          toolset: ${{ case(matrix.arch == 'arm64', '', '14.44') }}
+          toolset: '14.44'
 
       - name: NuGet sources.
         run: |
