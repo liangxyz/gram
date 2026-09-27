@@ -32,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_permissions_box.h" // ShowAboutGigagroup.
 #include "boxes/peers/edit_peer_requests_box.h"
 #include "core/chat_enhanced_settings.h"
+#include "core/enhanced_settings.h"
 #include "core/core_settings.h"
 #include "core/file_utilities.h"
 #include "core/mime_type.h"
@@ -11161,6 +11162,14 @@ bool HistoryWidget::updateCanSendMessage() {
 
 void HistoryWidget::forwardSelected() {
 	if (!_list) {
+		return;
+	}
+	if (EnhancedSettings::Get(
+			EnhancedSettings::Option::DirectForwardWithoutOpeningChat)) {
+		Window::ShowNewForwardMessagesBox(
+			controller(),
+			getSelectedItems(),
+			false);
 		return;
 	}
 	const auto weak = base::make_weak(this);

@@ -6827,6 +6827,14 @@ void ConfirmForwardSelectedItems(not_null<ListWidget*> widget) {
 		}
 	}
 	auto ids = widget->getSelectedIds();
+	if (EnhancedSettings::Get(
+			EnhancedSettings::Option::DirectForwardWithoutOpeningChat)) {
+		Window::ShowNewForwardMessagesBox(
+			widget->controller(),
+			std::move(ids),
+			false);
+		return;
+	}
 	const auto weak = base::make_weak(widget);
 	Window::ShowForwardMessagesBox(widget->controller(), std::move(ids), [=] {
 		if (const auto strong = weak.get()) {

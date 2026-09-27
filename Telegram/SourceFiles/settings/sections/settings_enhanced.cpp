@@ -250,6 +250,23 @@ struct DecodeEnhancedSettingsResult {
 
 	builder.add(nullptr, [] {
 		return Builder::SearchEntry{
+			.id = u"enhanced/direct-forward-without-opening-chat"_q,
+			.title = tr::lng_settings_direct_forward_without_opening_chat(
+				tr::now),
+			.keywords = {
+				u"forward"_q,
+				u"direct"_q,
+				u"recipient"_q,
+				u"target"_q,
+				u"chat"_q,
+			},
+			.deeplink
+				= u"tg://settings/enhanced/direct-forward-without-opening-chat"_q,
+		};
+	});
+
+	builder.add(nullptr, [] {
+		return Builder::SearchEntry{
 			.id = u"enhanced/extra-context-menu-options"_q,
 			.title = tr::lng_settings_extra_context_menu_options(tr::now),
 			.keywords = {
@@ -826,6 +843,10 @@ struct DecodeEnhancedSettingsResult {
 		addToggleOption(
 			content,
 			EnhancedSettings::Option::SendCommentAfterForwarding);
+		addToggleOption(
+			content,
+			EnhancedSettings::Option::DirectForwardWithoutOpeningChat,
+			tr::lng_settings_direct_forward_without_opening_chat_desc());
 		addToggleOption(
 			content,
 			EnhancedSettings::Option::DisableCloudDraftSync);

@@ -33,6 +33,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item_text.h"
 #include "history/history_item_components.h"
 #include "history/view/history_view_schedule_box.h"
+#include "core/enhanced_settings.h"
 #include "history/view/media/history_view_media.h"
 #include "history/view/media/menu/history_view_poll_menu.h"
 #include "history/view/media/history_view_save_document_action.h"
@@ -583,16 +584,25 @@ bool AddForwardSelectedAction(
 	}
 
 	menu->addAction(tr::lng_context_forward_selected(tr::now), [=] {
-		const auto weak = base::make_weak(list);
-		const auto callback = [=] {
-			if (const auto strong = weak.get()) {
-				strong->cancelSelection();
-			}
-		};
-		Window::ShowForwardMessagesBox(
-			request.navigation,
-			ExtractIdsList(request.selectedItems),
-			callback);
+		auto ids = ExtractIdsList(request.selectedItems);
+		if (EnhancedSettings::Get(
+				EnhancedSettings::Option::DirectForwardWithoutOpeningChat)) {
+			Window::ShowNewForwardMessagesBox(
+				request.navigation,
+				std::move(ids),
+				false);
+		} else {
+			const auto weak = base::make_weak(list);
+			const auto callback = [=] {
+				if (const auto strong = weak.get()) {
+					strong->cancelSelection();
+				}
+			};
+			Window::ShowForwardMessagesBox(
+				request.navigation,
+				std::move(ids),
+				callback);
+		}
 	}, &st::menuIconForward);
 	menu->addAction(tr::lng_context_forward_selected_no_quote(tr::now), [=] {
 		Window::ShowNewForwardMessagesBox(
@@ -653,11 +663,20 @@ bool AddForwardMessageAction(
 	if (!EnhancedSettings::HasExtraContextMenuOption(EnhancedSettings::ExtraContextMenuOption::MoreForward)) {
 		menu->addAction(tr::lng_context_forward_msg(tr::now), [=] {
 			if (const auto item = owner->message(itemId)) {
-				Window::ShowForwardMessagesBox(
-					request.navigation,
-					(asGroup
-						? owner->itemOrItsGroup(item)
-						: MessageIdsList{ 1, itemId }));
+				auto ids = (asGroup
+					? owner->itemOrItsGroup(item)
+					: MessageIdsList{ 1, itemId });
+				if (EnhancedSettings::Get(
+						EnhancedSettings::Option::DirectForwardWithoutOpeningChat)) {
+					Window::ShowNewForwardMessagesBox(
+						request.navigation,
+						std::move(ids),
+						false);
+				} else {
+					Window::ShowForwardMessagesBox(
+						request.navigation,
+						std::move(ids));
+				}
 			}
 		}, &st::menuIconForward);
 		return true;

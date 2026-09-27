@@ -84,6 +84,7 @@ enum class OptionId {
 	AllowScreenshots,
 	HideStarRatings,
 	ShowPeerId,
+	DirectForwardWithoutOpeningChat,
 	Count,
 };
 
@@ -169,6 +170,8 @@ inline constexpr auto AllowScreenshots
 inline constexpr auto HideStarRatings
 	= Key<bool>{ OptionId::HideStarRatings };
 inline constexpr auto ShowPeerId = Key<bool>{ OptionId::ShowPeerId };
+inline constexpr auto DirectForwardWithoutOpeningChat
+	= Key<bool>{ OptionId::DirectForwardWithoutOpeningChat };
 } // namespace Option
 
 enum class ExtraContextMenuOption : int {

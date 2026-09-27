@@ -246,6 +246,10 @@ const DescriptorList &DescriptorData() {
 			"enhanced/hide-star-ratings"),
 		Bool(OptionId::ShowPeerId, "show_peer_id",
 			&tr::lng_settings_show_peer_id, "enhanced/show-peer-id"),
+		Bool(OptionId::DirectForwardWithoutOpeningChat,
+			"direct_forward_without_opening_chat",
+			&tr::lng_settings_direct_forward_without_opening_chat,
+			"enhanced/direct-forward-without-opening-chat"),
 	};
 	return result;
 }
