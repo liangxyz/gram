@@ -2,6 +2,11 @@ name: Windows.
 
 on:
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (leave empty for default version)'
+        required: false
+        default: ''
   release:
     types: [published]
 
@@ -128,6 +133,8 @@ jobs:
           ARTIFACT_NAME="Yurigram_Win"
           if [ "${{ github.event_name }}" = "release" ]; then
             VERSION="${{ github.event.release.tag_name }}"
+          elif [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            VERSION="${{ github.event.inputs.tag_name }}"
           else
             VERSION="v$(grep 'AppVersionStr' Telegram/SourceFiles/core/version.h | cut -d '"' -f 2)"
           fi
@@ -160,6 +167,8 @@ jobs:
           API="-D TDESKTOP_API_ID=\"${{ secrets.API_ID }}\" -D TDESKTOP_API_HASH=\"${{ secrets.API_HASH }}\""
           echo "ARTIFACT_NAME=$ARTIFACT_NAME" >> $GITHUB_ENV
           echo "TDESKTOP_BUILD_API=$API" >> $GITHUB_ENV
+          echo "RELEASE_TAG=$VERSION" >> $GITHUB_ENV
+          echo "RELEASE_NAME=Yurigram $VERSION" >> $GITHUB_ENV
 
       - name: Free up some disk space.
         shell: pwsh
@@ -222,11 +231,11 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: artifact\
-          retention-days: 1
+          retention-days: 180
 
       - name: Package release artifact.
         id: package-release
-        if: github.event_name == 'release' && env.UPLOAD_ARTIFACT == 'true'
+        if: env.UPLOAD_ARTIFACT == 'true'
         shell: pwsh
         run: |
           $archive = "$env:ARTIFACT_NAME.zip"
@@ -234,12 +243,15 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value "archive=$archive"
 
       - name: Upload release package.
-        if: github.event_name == 'release' && env.UPLOAD_ARTIFACT == 'true'
+        if: env.UPLOAD_ARTIFACT == 'true'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          release_id: ${{ github.event.release.id }}
+          release_id: ${{ github.event.release.id || 0 }}
+          tag: ${{ github.event_name == 'release' && github.event.release.tag_name || env.RELEASE_TAG }}
+          release_name: ${{ github.event_name == 'release' && github.event.release.name || env.RELEASE_NAME }}
           file: ${{ steps.package-release.outputs.archive }}
+          overwrite: true
 
       - name: Save ThirdParty cache.
         if: always() && steps.cache-third-party.outcome == 'success' && steps.build-libs.outcome == 'success' && steps.cache-third-party.outputs.cache-hit != 'true'
