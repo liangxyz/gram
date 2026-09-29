@@ -189,7 +189,8 @@ Fn<void()> DeleteSublistHandler(
 void ShowNewForwardMessagesBox(
 	not_null<Window::SessionNavigation*> navigation,
 	MessageIdsList &&items,
-	bool no_quote);
+	bool no_quote,
+	Fn<void()> &&successCallback = nullptr);
 
 object_ptr<Ui::BoxContent> PrepareChooseRecipientBox(
 	not_null<Main::Session*> session,

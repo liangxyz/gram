@@ -585,19 +585,20 @@ bool AddForwardSelectedAction(
 
 	menu->addAction(tr::lng_context_forward_selected(tr::now), [=] {
 		auto ids = ExtractIdsList(request.selectedItems);
+		const auto weak = base::make_weak(list);
+		const auto callback = [=] {
+			if (const auto strong = weak.get()) {
+				strong->cancelSelection();
+			}
+		};
 		if (EnhancedSettings::Get(
 				EnhancedSettings::Option::DirectForwardWithoutOpeningChat)) {
 			Window::ShowNewForwardMessagesBox(
 				request.navigation,
 				std::move(ids),
-				false);
+				false,
+				callback);
 		} else {
-			const auto weak = base::make_weak(list);
-			const auto callback = [=] {
-				if (const auto strong = weak.get()) {
-					strong->cancelSelection();
-				}
-			};
 			Window::ShowForwardMessagesBox(
 				request.navigation,
 				std::move(ids),
@@ -605,10 +606,16 @@ bool AddForwardSelectedAction(
 		}
 	}, &st::menuIconForward);
 	menu->addAction(tr::lng_context_forward_selected_no_quote(tr::now), [=] {
+		const auto weak = base::make_weak(list);
 		Window::ShowNewForwardMessagesBox(
 				request.navigation,
 				ExtractIdsList(request.selectedItems),
-				true);
+				true,
+				[=] {
+					if (const auto strong = weak.get()) {
+						strong->cancelSelection();
+					}
+				});
 	}, &st::menuIconForward);
 	menu->addAction(tr::lng_forward_to_saved_message(tr::now), [=] {
 		const auto weak = base::make_weak(list);

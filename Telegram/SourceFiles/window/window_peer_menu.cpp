@@ -3204,7 +3204,8 @@ Api::SendAction prepareSendAction(
 void ShowNewForwardMessagesBox(
 		not_null<Window::SessionNavigation*> navigation,
 		MessageIdsList &&msgIds,
-		bool no_quote) {
+		bool no_quote,
+		Fn<void()> &&successCallback) {
 	const auto item = navigation->session().data().message(msgIds[0]);
 	const auto history = item->history();
 	const auto owner = &history->owner();
@@ -3257,14 +3258,46 @@ void ShowNewForwardMessagesBox(
 				|| Data::CanSend(thread, ChatRestriction::SendInline))
 			&& (!isGame || !thread->peer()->isBroadcast());
 	};
+	auto send = ShareBox::DefaultForwardCallback(
+		navigation->parentController()->uiShow(),
+		history,
+		msgIds,
+		{},
+		no_quote);
+	auto submitCallback = [=, send = std::move(send), callback = std::move(successCallback)](
+			std::vector<not_null<Data::Thread*>> &&result,
+			Fn<bool()> checkPaid,
+			TextWithTags comment,
+			Api::SendOptions options,
+			Data::ForwardOptions forwardOptions,
+			Data::GroupingOptions groupingOptions,
+			bool addSpoiler) {
+		auto paidPassed = false;
+		auto wrappedCheckPaid = [checkPaid = std::move(checkPaid), &paidPassed] {
+			if (checkPaid && checkPaid()) {
+				paidPassed = true;
+				return true;
+			}
+			return false;
+		};
+		send(
+			std::move(result),
+			std::move(wrappedCheckPaid),
+			std::move(comment),
+			options,
+			forwardOptions,
+			groupingOptions,
+			addSpoiler);
+		if (paidPassed && callback) {
+			if (!EnhancedSettings::Get(
+					EnhancedSettings::Option::ForwardRetainSelection)) {
+				callback();
+			}
+		}
+	};
 	navigation->parentController()->uiShow()->show(Box<ShareBox>(ShareBox::Descriptor{
 						.session = session,
-						.submitCallback = ShareBox::DefaultForwardCallback(
-						   navigation->parentController()->uiShow(),
-						   history,
-						   msgIds,
-						   {},
-						   no_quote),
+						.submitCallback = std::move(submitCallback),
 						.filterCallback = std::move(filterCallback),
 						.titleOverride = no_quote ? tr::lng_title_forward_as_copy() : tr::lng_title_multiple_forward(),
 						.forwardOptions = {

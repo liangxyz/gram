@@ -11164,30 +11164,41 @@ void HistoryWidget::forwardSelected() {
 	if (!_list) {
 		return;
 	}
+	const auto weak = base::make_weak(this);
+	const auto callback = [=] {
+		if (const auto strong = weak.get()) {
+			strong->clearSelected();
+		}
+	};
 	if (EnhancedSettings::Get(
 			EnhancedSettings::Option::DirectForwardWithoutOpeningChat)) {
 		Window::ShowNewForwardMessagesBox(
 			controller(),
 			getSelectedItems(),
-			false);
+			false,
+			callback);
 		return;
 	}
-	const auto weak = base::make_weak(this);
 	Window::ShowForwardMessagesBox(
 		controller(),
 		_list->getSelectedForwardItems(),
-		[=] {
-			if (const auto strong = weak.get()) {
-				strong->clearSelected();
-			}
-		});
+		callback);
 }
 
 void HistoryWidget::forwardNoQuoteSelected() {
 	if (!_list) {
 		return;
 	}
-	Window::ShowNewForwardMessagesBox(controller(), getSelectedItems(), true);
+	const auto weak = base::make_weak(this);
+	Window::ShowNewForwardMessagesBox(
+		controller(),
+		getSelectedItems(),
+		true,
+		[=] {
+			if (const auto strong = weak.get()) {
+				strong->clearSelected();
+			}
+		});
 }
 
 void HistoryWidget::forwardSelectedToSavedMessages() {

@@ -6827,20 +6827,22 @@ void ConfirmForwardSelectedItems(not_null<ListWidget*> widget) {
 		}
 	}
 	auto ids = widget->getSelectedIds();
+	const auto weak = base::make_weak(widget);
+	const auto callback = [=] {
+		if (const auto strong = weak.get()) {
+			strong->cancelSelection();
+		}
+	};
 	if (EnhancedSettings::Get(
 			EnhancedSettings::Option::DirectForwardWithoutOpeningChat)) {
 		Window::ShowNewForwardMessagesBox(
 			widget->controller(),
 			std::move(ids),
-			false);
+			false,
+			callback);
 		return;
 	}
-	const auto weak = base::make_weak(widget);
-	Window::ShowForwardMessagesBox(widget->controller(), std::move(ids), [=] {
-		if (const auto strong = weak.get()) {
-			strong->cancelSelection();
-		}
-	});
+	Window::ShowForwardMessagesBox(widget->controller(), std::move(ids), callback);
 }
 
 void ConfirmForwardNoQuoteSelectedItems(not_null<ListWidget*> widget) {
@@ -6854,7 +6856,16 @@ void ConfirmForwardNoQuoteSelectedItems(not_null<ListWidget*> widget) {
 		}
 	}
 	auto ids = widget->getSelectedIds();
-	Window::ShowNewForwardMessagesBox(widget->controller(), std::move(ids), true);
+	const auto weak = base::make_weak(widget);
+	Window::ShowNewForwardMessagesBox(
+		widget->controller(),
+		std::move(ids),
+		true,
+		[=] {
+			if (const auto strong = weak.get()) {
+				strong->cancelSelection();
+			}
+		});
 }
 
 MessageIdsList ExtractIdsList(const SelectedItems &items) {
