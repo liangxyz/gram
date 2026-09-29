@@ -20,6 +20,7 @@
     "lng_settings_disable_sync_draft_to_cloud": "Stop syncing local drafts to cloud",
     "lng_settings_direct_forward_without_opening_chat": "Direct forward without opening target chat",
     "lng_settings_direct_forward_without_opening_chat_desc": "Send forwarded messages directly from the recipient picker instead of opening the target chat.",
+    "lng_settings_forward_retain_selection": "Retain selection after forward",
     "lng_settings_show_scheduled_button": "Always show scheduled button",
     "lng_settings_voice_chat": "Voice Chat",
     "lng_settings_stereo_mode": "Enable Stereo Mode",

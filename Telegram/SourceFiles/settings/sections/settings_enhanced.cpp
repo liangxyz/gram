@@ -267,6 +267,21 @@ struct DecodeEnhancedSettingsResult {
 
 	builder.add(nullptr, [] {
 		return Builder::SearchEntry{
+			.id = u"enhanced/forward-retain-selection"_q,
+			.title = tr::lng_settings_forward_retain_selection(tr::now),
+			.keywords = {
+				u"forward"_q,
+				u"retain"_q,
+				u"selection"_q,
+				u"keep"_q,
+			},
+			.deeplink
+				= u"tg://settings/enhanced/forward-retain-selection"_q,
+		};
+	});
+
+	builder.add(nullptr, [] {
+		return Builder::SearchEntry{
 			.id = u"enhanced/extra-context-menu-options"_q,
 			.title = tr::lng_settings_extra_context_menu_options(tr::now),
 			.keywords = {
@@ -847,6 +862,9 @@ struct DecodeEnhancedSettingsResult {
 			content,
 			EnhancedSettings::Option::DirectForwardWithoutOpeningChat,
 			tr::lng_settings_direct_forward_without_opening_chat_desc());
+		addToggleOption(
+			content,
+			EnhancedSettings::Option::ForwardRetainSelection);
 		addToggleOption(
 			content,
 			EnhancedSettings::Option::DisableCloudDraftSync);

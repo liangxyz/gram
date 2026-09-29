@@ -85,6 +85,7 @@ enum class OptionId {
 	HideStarRatings,
 	ShowPeerId,
 	DirectForwardWithoutOpeningChat,
+	ForwardRetainSelection,
 	Count,
 };
 
@@ -172,6 +173,8 @@ inline constexpr auto HideStarRatings
 inline constexpr auto ShowPeerId = Key<bool>{ OptionId::ShowPeerId };
 inline constexpr auto DirectForwardWithoutOpeningChat
 	= Key<bool>{ OptionId::DirectForwardWithoutOpeningChat };
+inline constexpr auto ForwardRetainSelection
+	= Key<bool>{ OptionId::ForwardRetainSelection };
 } // namespace Option
 
 enum class ExtraContextMenuOption : int {

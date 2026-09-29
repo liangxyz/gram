@@ -630,7 +630,10 @@ bool AddForwardSelectedAction(
 			Ui::Toast::Show(tr::lng_share_done(tr::now));
 
 			if (const auto strong = weak.get()) {
-				strong->cancelSelection();
+				if (!EnhancedSettings::Get(
+						EnhancedSettings::Option::ForwardRetainSelection)) {
+					strong->cancelSelection();
+				}
 			}
 		});
 		

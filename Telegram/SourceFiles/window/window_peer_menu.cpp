@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/window_peer_menu.h"
 
+#include "core/enhanced_settings.h"
 #include "base/call_delayed.h"
 #include "menu/menu_check_item.h"
 #include "menu/menu_mark_as_read.h"
@@ -3865,7 +3866,10 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 				strong->closeBox();
 			}
 			if (successCallback) {
-				successCallback();
+				if (!EnhancedSettings::Get(
+						EnhancedSettings::Option::ForwardRetainSelection)) {
+					successCallback();
+				}
 			}
 		};
 		state->controller->singleChosen(
@@ -3967,7 +3971,10 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 			state->box->groupingOptions(),
 			state->box->addSpoiler());
 		if (!state->submit && successCallback) {
-			successCallback();
+			if (!EnhancedSettings::Get(
+					EnhancedSettings::Option::ForwardRetainSelection)) {
+				successCallback();
+			}
 		}
 	};
 
