@@ -274,6 +274,7 @@ struct DecodeEnhancedSettingsResult {
 				u"retain"_q,
 				u"selection"_q,
 				u"keep"_q,
+				u"quote"_q,
 			},
 			.deeplink
 				= u"tg://settings/enhanced/forward-retain-selection"_q,
@@ -864,7 +865,8 @@ struct DecodeEnhancedSettingsResult {
 			tr::lng_settings_direct_forward_without_opening_chat_desc());
 		addToggleOption(
 			content,
-			EnhancedSettings::Option::ForwardRetainSelection);
+			EnhancedSettings::Option::ForwardRetainSelection,
+			tr::lng_settings_forward_retain_selection_desc());
 		addToggleOption(
 			content,
 			EnhancedSettings::Option::DisableCloudDraftSync);

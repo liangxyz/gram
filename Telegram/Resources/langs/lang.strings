@@ -8788,6 +8788,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_direct_forward_without_opening_chat" = "Direct forward without opening target chat";
 "lng_settings_direct_forward_without_opening_chat_desc" = "Send forwarded messages directly from the recipient picker instead of opening the target chat.";
 "lng_settings_forward_retain_selection" = "Retain selection after forward";
+"lng_settings_forward_retain_selection_desc" = "Keep messages selected after regular or no-quote forwarding.";
 "lng_settings_mpris_call_hangup" = "Use media controls to accept or hangup";
 "lng_settings_enhanced" = "Enhanced Settings";
 "lng_settings_enhanced_import" = "Import";
