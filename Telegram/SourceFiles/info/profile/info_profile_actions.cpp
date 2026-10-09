@@ -32,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/translate_box.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
+#include "core/enhanced_settings.h"
 #include "core/ui_integration.h"
 #include "data/business/data_business_common.h"
 #include "data/business/data_business_info.h"
@@ -44,6 +45,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
 #include "data/data_peer_values.h"
+#include "data/data_photo.h"
 #include "data/data_saved_sublist.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
@@ -122,8 +124,47 @@ namespace Profile {
 namespace {
 
 constexpr auto kDay = Data::WorkingInterval::kDay;
-constexpr auto kMaxChannelId = -1000000000000;
 constexpr auto kPeerIdLinkIndex = uint16(1);
+constexpr auto kBotApiChannelIdOffset = int64(1000000000000);
+
+[[nodiscard]] QString ProfilePeerId(not_null<PeerData*> peer) {
+	const auto bare = peer->id.value & PeerId::kChatTypeMask;
+	const auto mtproto = EnhancedSettings::Get(
+		EnhancedSettings::Option::PeerIdType
+	) == int(EnhancedSettings::PeerIdType::MTProto);
+	if (mtproto || peer->isUser()) {
+		return QString::number(bare);
+	} else if (peer->isChat()) {
+		return QString::number(-int64(bare));
+	} else if (peer->isChannel()) {
+		return QString::number(-int64(bare) - kBotApiChannelIdOffset);
+	}
+	return QString::number(bare);
+}
+
+[[nodiscard]] QString PeerIdLabel(not_null<PeerData*> peer) {
+	const auto photoId = peer->userpicPhotoId();
+	if (!photoId) {
+		return u"ID"_q;
+	}
+
+	auto dc = peer->owner().photo(photoId)->getDC();
+	if (!dc) {
+		const auto location = peer->userpicLocation();
+		if (const auto file = std::get_if<StorageFileLocation>(
+				&location.file().data)) {
+			dc = file->dcId();
+		}
+	}
+	switch (dc) {
+	case 1:
+	case 3: return u"DC%1, Miami FL, USA"_q.arg(dc);
+	case 2:
+	case 4: return u"DC%1, Amsterdam, NL"_q.arg(dc);
+	case 5: return u"DC%1, Singapore, SG"_q.arg(dc);
+	}
+	return u"ID"_q;
+}
 
 class DraggableUrlClickHandler final : public UrlClickHandler {
 public:
@@ -953,9 +994,7 @@ void DeleteContactNote(
 	) | rpl::start_spawning(result->lifetime());
 
 	auto label = BirthdayLabelText(rpl::duplicate(birthday));
-	auto text = BirthdayValueText(
-		rpl::duplicate(birthday)
-	) | rpl::map(tr::marked);
+	auto text = BirthdayValueMarkedText(user, rpl::duplicate(birthday));
 
 	const auto giftIcon = Ui::CreateChild<Ui::RpWidget>(layout);
 	giftIcon->resize(st::birthdayTodayIcon.size());
@@ -1008,7 +1047,12 @@ void DeleteContactNote(
 	layout->add(object_ptr<Ui::FlatLabel>(
 		layout,
 		std::move(nonEmptyText),
-		st::birthdayLabeled));
+		st::birthdayLabeled,
+		st::defaultPopupMenu,
+		Ui::Text::MarkedContext{
+			.customEmojiFactory = user->owner().customEmojiManager().factory(
+				Data::CustomEmojiManager::SizeTag::Normal),
+		}));
 	layout->add(Ui::CreateSkipWidget(layout, st::infoLabelSkip));
 	layout->add(object_ptr<Ui::FlatLabel>(
 		layout,
@@ -1145,7 +1189,7 @@ rpl::producer<CreditsAmount> AddCurrencyAction(
 	const auto button = wrapButton->entity();
 	const auto name = Ui::CreateChild<Ui::FlatLabel>(button, st.rightLabel);
 	const auto icon = state->helper.paletteDependent({ .factory = [=] {
-		return Ui::Earn::IconCurrencyColored(
+		return Ui::Earn::IconCurrencyTwoTone(
 			st.rightLabel.style.font,
 			st.rightLabel.textFg->c);
 	}, .margin = st::channelEarnCurrencyCommonMargins });
@@ -1454,9 +1498,9 @@ Section DetailsFiller::makeInfo() {
 				Qt::SkipEmptyParts).last();
 			if (!joinDate.isEmpty()) {
 				const auto weak = base::make_weak(window);
-				window->session().api().resolveJumpToDate(
+				window->session().api().resolveJumpToTime(
 					Dialogs::Key(peer->owner().history(peer)),
-					base::unixtime::parse(joinDate.toULongLong()).date(),
+					TimeId(joinDate.toULongLong()),
 					[=](not_null<PeerData*> p, MsgId m) {
 						const auto f = Window::SectionShow::Way::Forward;
 						if (const auto strong = weak.get()) {
@@ -1471,16 +1515,18 @@ Section DetailsFiller::makeInfo() {
 		return true;
 	};
 
-	const auto addTranslateToMenu = [&,
+	const auto setupAboutContextMenu = [&,
 			peer = _peer.get(),
 			controller = _controller->parentController()](
 			not_null<Ui::FlatLabel*> label,
 			rpl::producer<TextWithEntities> &&text) {
 		struct State {
 			rpl::variable<TextWithEntities> labelText;
+			rpl::variable<TextWithEntities> aboutText;
 		};
 		const auto state = label->lifetime().make_state<State>();
 		state->labelText = std::move(text);
+		state->aboutText = AboutValue(peer);
 		label->setContextMenuHook([=](
 				Ui::FlatLabel::ContextMenuRequest request) {
 			if (request.link) {
@@ -1497,24 +1543,49 @@ Section DetailsFiller::makeInfo() {
 					return;
 				}
 			}
-			label->fillContextMenu(request);
-			if (Ui::SkipTranslate(state->labelText.current())) {
+			const auto selected = !request.selection.empty();
+			const auto full = state->labelText.current();
+			const auto about = state->aboutText.current();
+			const auto advanced = (about.text.size() < full.text.size());
+			if (selected || !advanced) {
+				label->fillContextMenu(request);
+			} else {
+				if (!about.empty()) {
+					request.menu->addAction(
+						tr::lng_context_copy_text(tr::now),
+						[=] {
+							TextUtilities::SetClipboardText(
+								TextForMimeData::WithExpandedLinks(about));
+						});
+				}
+				if (const auto link = request.link) {
+					const auto copy = link->copyToClipboardContextItemText();
+					if (!copy.isEmpty()) {
+						request.menu->addAction(
+							copy,
+							[text = link->copyToClipboardText()] {
+								TextUtilities::SetClipboardText({ text });
+							});
+					}
+				}
+			}
+			if (Ui::SkipTranslate(selected ? full : about)) {
 				return;
 			}
-			auto item = (request.selection.empty()
-				? tr::lng_context_translate
-				: tr::lng_context_translate_selected)(tr::now);
+			auto item = (selected
+				? tr::lng_context_translate_selected
+				: tr::lng_context_translate)(tr::now);
 			request.menu->addAction(std::move(item), [=] {
 				controller->window().show(Box(
 					Ui::TranslateBox,
 					peer,
 					MsgId(),
-					request.selection.empty()
-						? state->labelText.current()
-						: Ui::Text::Mid(
-							state->labelText.current(),
+					(selected
+						? Ui::Text::Mid(
+							full,
 							request.selection.from,
-							request.selection.to - request.selection.from),
+							request.selection.to - request.selection.from)
+						: about),
 					false));
 			});
 		});
@@ -1694,7 +1765,7 @@ Section DetailsFiller::makeInfo() {
 		const auto about = addInfoLine(
 			std::move(label),
 			AboutWithAdvancedValue(user));
-		addTranslateToMenu(about.text, AboutWithAdvancedValue(user));
+		setupAboutContextMenu(about.text, AboutWithAdvancedValue(user));
 		SetupAboutPeerIdDrag(about.text, user);
 
 		const auto usernameLine = addInfoOneLine(
@@ -1869,7 +1940,7 @@ Section DetailsFiller::makeInfo() {
 			? rpl::single(TextWithEntities())
 			: AboutWithAdvancedValue(_peer));
 		if (!_topic) {
-			addTranslateToMenu(about.text, AboutWithAdvancedValue(_peer));
+			setupAboutContextMenu(about.text, AboutWithAdvancedValue(_peer));
 			SetupAboutPeerIdDrag(about.text, _peer);
 		}
 	}
@@ -1877,7 +1948,7 @@ Section DetailsFiller::makeInfo() {
 	// https://github.com/AyuGram/AyuGramDesktop/blob/dev/Telegram/SourceFiles/ayu/ui/utils/ayu_profile_values.cpp
 	// https://github.com/AyuGram/AyuGramDesktop/blob/dev/Telegram/SourceFiles/info/profile/info_profile_actions.cpp#L1826
 	if(EnhancedSettings::Get(EnhancedSettings::Option::ShowPeerId)) {
-		const auto idLabel = QString("ID");
+		const auto idLabel = _topic ? u"ID"_q : PeerIdLabel(_peer);
 		auto idNum = QString::number(0);
 
 		if(_topic) {
@@ -1885,12 +1956,7 @@ Section DetailsFiller::makeInfo() {
 			idNum = QString::number(_peer->forumTopicFor(topicRootId)->topicRootId().bare);
 		}
 		else {
-			idNum = QString::number(_peer->id.value & PeerId::kChatTypeMask);
-			if (_peer->isChat()) {
-				idNum = idNum.prepend("-");
-			} else if (_peer->isChannel()) {
-				idNum = QString::number(peerToChannel(_peer->id).bare - kMaxChannelId).prepend("-");
-			}
+			idNum = ProfilePeerId(_peer);
 		}
 		auto idText = rpl::single(Ui::Text::Wrapped({ idNum }, EntityType::Code, {}));
 		auto idInfo = addInfoOneLine(
@@ -2305,9 +2371,14 @@ void DetailsFiller::addMainApp(not_null<UserData*> user) {
 		return text;
 	});
 	auto setup = [url](not_null<Ui::FlatLabel*> label) {
-		label->setClickHandlerFilter([=](const auto &...) {
-			UrlClickHandler::Open(url);
-			return false;
+		label->setClickHandlerFilter([=](
+				const ClickHandlerPtr &link,
+				Qt::MouseButton) {
+			if (link && link->url() == url) {
+				UrlClickHandler::Open(url);
+				return false;
+			}
+			return true;
 		});
 	};
 
@@ -2859,7 +2930,7 @@ void ActionsFiller::addAffiliateProgram(not_null<UserData*> user) {
 		bool requested = false;
 		Fn<void()> open;
 	};
-	const auto recipients = std::make_shared<StarRefRecipients>();
+	const auto recipients = inner->lifetime().make_state<StarRefRecipients>();
 	recipients->open = [=] {
 		if (!recipients->list.empty()) {
 			const auto program = user->botInfo->starRefProgram;
@@ -2869,10 +2940,11 @@ void ActionsFiller::addAffiliateProgram(not_null<UserData*> user) {
 				recipients->list));
 		} else if (!recipients->requested) {
 			recipients->requested = true;
-			const auto done = [=](std::vector<not_null<PeerData*>> list) {
+			const auto done = crl::guard(inner, [=](
+					std::vector<not_null<PeerData*>> list) {
 				recipients->list = std::move(list);
 				recipients->open();
-			};
+			});
 			Info::BotStarRef::ResolveRecipients(&user->session(), done);
 		}
 	};

@@ -34,6 +34,10 @@ namespace Ui::Text {
 class CustomEmoji;
 } // namespace Ui::Text
 
+namespace Wallet {
+class CardAngle;
+} // namespace Wallet
+
 namespace Ui {
 
 class ChatTheme;
@@ -79,6 +83,7 @@ struct MessageStyle {
 	style::icon tailRight = { Qt::Uninitialized };
 	style::icon historyRepliesIcon = { Qt::Uninitialized };
 	style::icon historyViewsIcon = { Qt::Uninitialized };
+	style::icon historyForwardsIcon = { Qt::Uninitialized };
 	style::icon historyPinIcon = { Qt::Uninitialized };
 	style::icon historySilentIcon = { Qt::Uninitialized };
 	style::icon historySentIcon = { Qt::Uninitialized };
@@ -419,7 +424,8 @@ public:
 		bool selected,
 		uint8 colorIndex) const;
 	[[nodiscard]] QColor collectibleNameColor(
-		const std::shared_ptr<ColorCollectible> &collectible) const;
+		const std::shared_ptr<ColorCollectible> &collectible,
+		bool selected) const;
 	[[nodiscard]] not_null<Text::QuotePaintCache*> coloredQuoteCache(
 		bool selected,
 		uint8 colorIndex) const;
@@ -443,6 +449,7 @@ public:
 	[[nodiscard]] not_null<BackgroundEmojiData*> backgroundEmojiData(
 		uint64 emojiId,
 		const std::shared_ptr<ColorCollectible> &collectible) const;
+	[[nodiscard]] not_null<Wallet::CardAngle*> gramCardAngle() const;
 
 	[[nodiscard]] const CornersPixmaps &msgBotKbOverBgAddCornersSmall() const;
 	[[nodiscard]] const CornersPixmaps &msgBotKbOverBgAddCornersLarge() const;
@@ -466,6 +473,9 @@ public:
 	}
 	[[nodiscard]] const style::icon &historyViewsInvertedIcon() const {
 		return _historyViewsInvertedIcon;
+	}
+	[[nodiscard]] const style::icon &historyForwardsInvertedIcon() const {
+		return _historyForwardsInvertedIcon;
 	}
 	[[nodiscard]] const style::icon &historyViewsSendingIcon() const {
 		return _historyViewsSendingIcon;
@@ -570,6 +580,7 @@ private:
 		std::unique_ptr<Text::QuotePaintCache> replySelected;
 		ColoredPalette palette;
 		ColoredPalette paletteSelected;
+		QColor nameSelected;
 	};
 
 	void assignPalette(not_null<const style::palette*> palette);
@@ -582,7 +593,8 @@ private:
 		uint8 colorIndex) const;
 	[[nodiscard]] not_null<Text::QuotePaintCache*> collectibleCache(
 		std::unique_ptr<Text::QuotePaintCache> &cache,
-		const std::shared_ptr<ColorCollectible> &collectible) const;
+		const std::shared_ptr<ColorCollectible> &collectible,
+		bool selected) const;
 	[[nodiscard]] CollectibleColors &resolveCollectibleCaches(
 		const std::shared_ptr<ColorCollectible> &collectible) const;
 
@@ -717,6 +729,7 @@ private:
 		CollectibleColors,
 		ColorCollectiblePtrCompare> _collectibleCaches;
 	mutable base::flat_map<uint64, BackgroundEmojiData> _backgroundEmojis;
+	mutable std::unique_ptr<Wallet::CardAngle> _gramCardAngle;
 
 	style::TextPalette _historyPsaForwardPalette;
 	style::TextPalette _imgReplyTextPalette;
@@ -724,6 +737,7 @@ private:
 	style::TextPalette _priceTagTextPalette;
 	style::icon _historyRepliesInvertedIcon = { Qt::Uninitialized };
 	style::icon _historyViewsInvertedIcon = { Qt::Uninitialized };
+	style::icon _historyForwardsInvertedIcon = { Qt::Uninitialized };
 	style::icon _historyViewsSendingIcon = { Qt::Uninitialized };
 	style::icon _historyViewsSendingInvertedIcon = { Qt::Uninitialized };
 	style::icon _historyPinInvertedIcon = { Qt::Uninitialized };

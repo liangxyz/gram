@@ -467,8 +467,14 @@ public:
 		FullReplyTo to;
 		bool forceAnotherChat = false;
 	};
-	[[nodiscard]] rpl::producer<FullMsgId> editMessageRequested() const;
-	void editMessageRequestNotify(FullMsgId item) const;
+	struct EditMessageRequest {
+		FullMsgId id;
+		std::optional<uint64> bot;
+	};
+	[[nodiscard]] rpl::producer<EditMessageRequest> editMessageRequested() const;
+	void editMessageRequestNotify(
+		FullMsgId item,
+		std::optional<uint64> bot = std::nullopt) const;
 	[[nodiscard]] bool lastMessageEditRequestNotify() const;
 	[[nodiscard]] auto replyToMessageRequested() const
 		-> rpl::producer<ReplyToMessageRequest>;
@@ -555,6 +561,7 @@ public:
 		Element *replacing) override;
 	QString elementAuthorRank(not_null<const Element*> view) override;
 	bool elementHideTopicButton(not_null<const Element*> view) override;
+	GramReadLine *elementGramReadLine() override;
 
 	void collapseGapsUpdated();
 	[[nodiscard]] auto collapseGaps() const
@@ -578,6 +585,7 @@ public:
 	QString accessibilityChildName(int index) const override;
 	QAccessible::State accessibilityChildState(int index) const override;
 	QAccessible::Role accessibilityChildRole() const override;
+	QAccessible::Role accessibilityChildRoleAt(int index) const override;
 	QRect accessibilityChildRect(int index) const override;
 	int accessibilityChildColumnCount(int row) const override;
 	QAccessible::Role accessibilityChildSubItemRole() const override;
@@ -993,6 +1001,7 @@ private:
 	base::flat_map<not_null<UserData*>, SenderOnlineState> _senderOnline;
 
 	const std::unique_ptr<Ui::PathShiftGradient> _pathGradient;
+	std::unique_ptr<GramReadLine> _gramReadLine;
 	QPainterPath _highlightPathCache;
 
 	base::unique_qptr<Ui::RpWidget> _emptyInfo = nullptr;
@@ -1117,7 +1126,7 @@ private:
 	base::Timer _touchScrollTimer;
 	Ui::MiddleClickAutoscroll _middleClickAutoscroll;
 
-	rpl::event_stream<FullMsgId> _requestedToEditMessage;
+	rpl::event_stream<EditMessageRequest> _requestedToEditMessage;
 	rpl::event_stream<ReplyToMessageRequest> _requestedToReplyToMessage;
 	rpl::event_stream<FullMsgId> _requestedToReadMessage;
 	rpl::event_stream<FullMsgId> _requestedToShowMessage;

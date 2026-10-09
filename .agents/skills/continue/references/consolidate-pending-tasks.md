@@ -2,7 +2,7 @@
 
 Use one fresh leaf worker to reduce fixed per-task execution cost after newly
 discovered follow-ups reach canonical AI state. Prefer a smaller queue when one
-context pass, plan, review, build, fixture, and test run can prove several close
+context pass, plan, review, and build can cover several close
 requests without weakening any of them.
 
 ## Contents
@@ -22,7 +22,7 @@ ids. When a current invocation batch is already frozen, its `batch_task_ids`
 are authoritative. Only recovery before a new batch is frozen uses the marker's
 Batch list, which already includes every Created id. Read the discovery source
 task and newly routed ids from the marker. Do not delegate. Do not read or
-modify Telegram source, build, test, inbox, claim, or task execution state.
+modify Telegram source, build, launch an application, create tests, inbox, claim, or task execution state.
 Work only in the clean checkout-specific AI slot after the discovery-routing
 commit has published.
 
@@ -33,6 +33,10 @@ indexes, and one new consolidation receipt. It must not invent new work, alter
 approved history, create or move projects, or change the meaning of a request.
 
 ## Inventory and eligibility
+
+Follow the shared [project-context policy](../../../shared/project-context.md)
+for project reads and index edits; the unfinished-state safety inventory below
+remains mandatory.
 
 Refresh canonical AI state, then inventory only unfinished work. Approved tasks
 are terminal history: they never enter a candidate set, and a task becomes
@@ -52,7 +56,8 @@ given id as a dependency. An approved task among an unfinished id's dependents
 is corrupt canonical state, not a merge decision; write nothing and return
 `BLOCKED` naming that pair. Read into context only the unfinished tasks' ids,
 statuses, ownership, projects, dependencies, and tracked task-directory
-contents, plus `projects/*/tasks.md` for the projects those tasks belong to.
+contents. Search project indexes for candidate ids and read only matching
+entries needed for navigation or replacement.
 Approved and retired ids enter this pass only as opaque dependency targets,
 never as directory reads or content comparisons; the size of the finished queue
 is at most a count, never an enumeration. A pass whose cost grows with shipped
@@ -76,8 +81,10 @@ has begun it. Inputs are allowed only when every pertinent file can be copied
 and relinked without loss.
 
 Read `task.md` and `state.yaml` completely for every member of each partition
-containing at least two candidates. Read that project's `project.md` and
-`tasks.md`, or the complete standalone candidate set. Inspect dependency and
+containing at least two candidates. Read the project's small overview and only
+candidate-relevant index or reference sections; use headings/search and bounded
+reads for large legacy documents. Keep approved and retired task directories
+opaque under this pass's stricter boundary above. Inspect dependency and
 reverse-dependency state within the unfinished set. A candidate referenced by an
 `in-progress`, `blocked`, claimed, or otherwise non-mergeable unfinished task is
 ineligible; unclaimed `todo` dependents may be rewritten atomically with the
@@ -101,12 +108,12 @@ material part of its context, implementation or measurement setup. Strong merge
 signals include:
 
 - the same component, control flow, surface, source seam, or expected files;
-- one fixture, account state, overlay, process lifetime, or UI navigation can
+- one source-level context and review pass can
   exercise all acceptance criteria;
 - one implementation naturally establishes several requested invariants;
 - coverage tasks measure the same parent diff, state machine, or tightly
   related surfaces from one instrumented run;
-- the combined work can use one coherent plan, review, Debug build, and test
+- the combined work can use one coherent plan, review, and Debug build
   loop instead of merely running unrelated jobs back to back.
 
 Merge more than two tasks whenever those signals hold for the whole cluster.
@@ -122,7 +129,7 @@ left separate and the concrete reason; do not use vague labels such as
 "unrelated" or "too large".
 
 For coverage clusters, retain each claim's own parent-diff boundary and revert
-test. A union of dependencies or paths is not a new scope boundary. Combining
+review. A union of dependencies or paths is not a new scope boundary. Combining
 them saves setup; it never widens what shipped behavior each source task owes.
 If a measurement finds a deviation, the adaptive task may repair it in the same
 run.
@@ -184,11 +191,12 @@ rewrite all links, and map every old file to the new path in the receipt. If an
 input cannot be preserved, exclude that cluster. Rewrite eligible external
 dependents' dependency lists and prerequisite prose from old ids to the new id.
 
-For a named project, replace the old links with the new link in `tasks.md` and
-make nearby durable narrative coherent. Do not store live status there. Do not
-edit earlier receipts, approved task artifacts, or the discovery-routing marker;
-they are immutable history. Repeat the complete old-to-new mapping in the
-replacement task, each durable alias, and the consolidation receipt.
+For a named project, replace only the relevant old task links with the new link
+in `tasks.md`, preserving unrelated navigation. Keep merge rationale and
+criterion accounting in the replacement and receipt under the shared policy.
+Do not edit earlier receipts, approved task artifacts, or the discovery-routing
+marker; they are immutable history. Repeat the complete old-to-new mapping in
+the replacement task, each durable alias, and the consolidation receipt.
 
 ## Traceability and validation
 

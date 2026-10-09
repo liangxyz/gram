@@ -36,6 +36,7 @@ class GiftAuctions;
 class RecentForwardTargets;
 class RecentInlineBots;
 class RecentPeers;
+class RecentMoneyRecipients;
 class RecentSharedMediaGifts;
 class ScheduledMessages;
 class WelcomeMessages;
@@ -81,9 +82,17 @@ namespace InlineBots {
 class AttachWebView;
 } // namespace InlineBots
 
+namespace BotUse {
+class ChatState;
+} // namespace BotUse
+
 namespace Ui {
 struct ColorIndicesCompressed;
 } // namespace Ui
+
+namespace Wallet {
+class Session;
+} // namespace Wallet
 
 namespace Main {
 
@@ -151,6 +160,9 @@ public:
 	[[nodiscard]] Data::RecentForwardTargets &recentForwardTargets() const {
 		return *_recentForwardTargets;
 	}
+	[[nodiscard]] Data::RecentMoneyRecipients &recentMoneyRecipients() const {
+		return *_recentMoneyRecipients;
+	}
 	[[nodiscard]] Data::RecentSharedMediaGifts &recentSharedGifts() const {
 		return *_recentSharedGifts;
 	}
@@ -190,6 +202,9 @@ public:
 	[[nodiscard]] Data::Credits &credits() const {
 		return *_credits;
 	}
+	[[nodiscard]] Wallet::Session &wallet() const {
+		return *_wallet;
+	}
 	[[nodiscard]] Api::Updates &updates() const {
 		return *_updates;
 	}
@@ -222,6 +237,9 @@ public:
 	}
 	[[nodiscard]] SendAsPeers &sendAsPeers() const {
 		return *_sendAsPeers;
+	}
+	[[nodiscard]] BotUse::ChatState &botUseChats() const {
+		return *_botUseChats;
 	}
 	[[nodiscard]] InlineBots::AttachWebView &attachWebView() const {
 		return *_attachWebView;
@@ -330,9 +348,11 @@ private:
 	const std::unique_ptr<Stickers::DicePacks> _diceStickersPacks;
 	const std::unique_ptr<Stickers::GiftBoxPack> _giftBoxStickersPacks;
 	const std::unique_ptr<SendAsPeers> _sendAsPeers;
+	const std::unique_ptr<BotUse::ChatState> _botUseChats;
 	const std::unique_ptr<InlineBots::AttachWebView> _attachWebView;
 	const std::unique_ptr<Data::RecentPeers> _recentPeers;
 	const std::unique_ptr<Data::RecentForwardTargets> _recentForwardTargets;
+	const std::unique_ptr<Data::RecentMoneyRecipients> _recentMoneyRecipients;
 	const std::unique_ptr<Data::RecentSharedMediaGifts> _recentSharedGifts;
 	const std::unique_ptr<Data::GiftAuctions> _giftAuctions;
 	const std::unique_ptr<Data::ScheduledMessages> _scheduledMessages;
@@ -346,6 +366,7 @@ private:
 	const std::unique_ptr<Data::Factchecks> _factchecks;
 	const std::unique_ptr<Data::LocationPickers> _locationPickers;
 	const std::unique_ptr<Data::Credits> _credits;
+	const std::unique_ptr<Wallet::Session> _wallet;
 	const std::unique_ptr<Data::PromoSuggestions> _promoSuggestions;
 	const std::unique_ptr<Data::Passkeys> _passkeys;
 	const std::unique_ptr<Settings::FaqSuggestions> _faqSuggestions;

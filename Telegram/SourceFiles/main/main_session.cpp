@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session_settings.h"
 #include "main/main_app_config.h"
 #include "main/session/send_as_peers.h"
+#include "bot_use/bot_use_chat_state.h"
 #include "mtproto/mtproto_config.h"
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "chat_helpers/stickers_dice_pack.h"
@@ -38,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/components/promo_suggestions.h"
 #include "data/components/recent_forward_targets.h"
 #include "data/components/recent_inline_bots.h"
+#include "data/components/recent_money_recipients.h"
 #include "data/components/recent_peers.h"
 #include "data/components/recent_shared_media_gifts.h"
 #include "data/components/scheduled_messages.h"
@@ -51,6 +53,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_download_manager.h"
 #include "data/stickers/data_stickers.h"
+#include "wallet/wallet_session.h"
 #include "window/window_session_controller.h"
 #include "window/window_controller.h"
 #include "window/window_lock_widgets.h"
@@ -117,9 +120,11 @@ Session::Session(
 , _diceStickersPacks(std::make_unique<Stickers::DicePacks>(this))
 , _giftBoxStickersPacks(std::make_unique<Stickers::GiftBoxPack>(this))
 , _sendAsPeers(std::make_unique<SendAsPeers>(this))
+, _botUseChats(std::make_unique<BotUse::ChatState>())
 , _attachWebView(std::make_unique<InlineBots::AttachWebView>(this))
 , _recentPeers(std::make_unique<Data::RecentPeers>(this))
 , _recentForwardTargets(std::make_unique<Data::RecentForwardTargets>(this))
+, _recentMoneyRecipients(std::make_unique<Data::RecentMoneyRecipients>(this))
 , _recentSharedGifts(std::make_unique<Data::RecentSharedMediaGifts>(this))
 , _giftAuctions(std::make_unique<Data::GiftAuctions>(this))
 , _scheduledMessages(std::make_unique<Data::ScheduledMessages>(this))
@@ -136,6 +141,7 @@ Session::Session(
 , _factchecks(std::make_unique<Data::Factchecks>(this))
 , _locationPickers(std::make_unique<Data::LocationPickers>())
 , _credits(std::make_unique<Data::Credits>(this))
+, _wallet(std::make_unique<Wallet::Session>(this))
 , _promoSuggestions(std::make_unique<Data::PromoSuggestions>(this, [=] {
 	using State = Data::SetupEmailState;
 	if (_promoSuggestions->setupEmailState() == State::Setup
@@ -146,16 +152,22 @@ Session::Session(
 			// base::call_delayed(5000, [=] {
 				Core::App().lockBySetupEmail();
 			});
+			const auto weak = base::make_weak(this);
 			const auto unlockLifetime = std::make_shared<rpl::lifetime>();
 			_promoSuggestions->setupEmailStateValue(
 			) | rpl::filter([](Data::SetupEmailState s) {
 				return s == Data::SetupEmailState::None;
-			}) | rpl::take(1) | rpl::on_next(crl::guard(this, [=] {
+			}) | rpl::take(1) | rpl::on_next_done([=] {
+				unlockLifetime->destroy();
+				if (!weak) {
+					return;
+				}
 				Core::App().unlockSetupEmail();
 				_settings->setSetupEmailState(State::None);
 				saveSettingsDelayed(200);
+			}, [=] {
 				unlockLifetime->destroy();
-			}), *unlockLifetime);
+			}, *unlockLifetime);
 		} else {
 			_settings->setSetupEmailState(
 				_promoSuggestions->setupEmailState());

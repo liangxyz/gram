@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/random.h"
 #include "base/timer_rpl.h"
 #include "base/unixtime.h"
+#include "bot_use/bot_use_sending.h"
 #include "boxes/music_attach_box.h"
 #include "boxes/peers/choose_peer_box.h"
 #include "boxes/peers/create_managed_bot_box.h"
@@ -80,11 +81,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_custom_emoji.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
+#include "ui/ui_utility.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/dropdown_menu.h"
+#include "ui/widgets/menu/menu_action.h"
 #include "ui/widgets/menu/menu_item_base.h"
 #include "ui/widgets/popup_menu.h"
+#include "wallet/wallet_panel.h"
+#include "wallet/wallet_session.h"
+#include "wallet/wallet_user_addresses.h"
 #include "webview/webview_dialog.h"
 #include "webview/webview_interface.h"
 #include "window/themes/window_theme.h"
@@ -96,6 +102,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_info.h" // infoVerifiedStar.
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
+#include "styles/style_wallet.h"
 
 #include <QSvgRenderer>
 
@@ -241,18 +248,6 @@ constexpr auto kPopularAppBotsLimit = 100;
 	});
 }
 
-[[nodiscard]] Ui::LocationPickerConfig ResolveMapsConfig(
-		not_null<Main::Session*> session) {
-	//const auto &appConfig = session->appConfig();
-	//auto map = appConfig.get<base::flat_map<QString, QString>>(
-	//	u"tdesktop_config_map"_q,
-	//	base::flat_map<QString, QString>());
-	return {
-		.mapsToken = u"pk.eyJ1Ijoiam9obi1wcmVzdG9uIiwiYSI6ImNseTVod2Y3MDBiczMyanM3d3E3NXloM3kifQ.K12vn1eHYqFAoqVWvnMXiA"_q,
-		.geoToken = u"pk.eyJ1Ijoiam9obi1wcmVzdG9uIiwiYSI6ImNseWg0OWpvNTAwa3AycnF5ZDM3a2dkYmUifQ.n12eA4c3AygrB9yinAp2Ww"_q,
-	};
-}
-
 [[nodiscard]] Window::SessionController *WindowForThread(
 		base::weak_ptr<Window::SessionController> weak,
 		not_null<Data::Thread*> thread) {
@@ -263,6 +258,8 @@ constexpr auto kPopularAppBotsLimit = 100;
 	if (strong && strong->windowId().hasChatsList()) {
 		strong->showThread(thread);
 		return strong;
+	} else if (!Window::CanShowSeparateWindow(thread)) {
+		return nullptr;
 	}
 	const auto window = Core::App().ensureSeparateWindowFor(thread);
 	return window ? window->sessionController() : nullptr;
@@ -1112,9 +1109,10 @@ void WebViewInstance::resolveApp(
 }
 
 void WebViewInstance::confirmOpen(Fn<void()> done, bool forceConfirmation) {
-	if (!forceConfirmation
-		&& (_bot->isVerified()
-			|| _session->local().isPeerTrustedOpenWebView(_bot->id))) {
+	if (_bot->isOldWalletBot()
+		|| (!forceConfirmation
+			&& (_bot->isVerified()
+				|| _session->local().isPeerTrustedOpenWebView(_bot->id)))) {
 		done();
 		return;
 	}
@@ -1149,9 +1147,10 @@ void WebViewInstance::confirmAppOpen(
 		bool writeAccess,
 		Fn<void(bool allowWrite)> done,
 		bool forceConfirmation) {
-	if (!forceConfirmation
-		&& (_bot->isVerified()
-			|| _session->local().isPeerTrustedOpenWebView(_bot->id))) {
+	if (_bot->isOldWalletBot()
+		|| (!forceConfirmation
+			&& (_bot->isVerified()
+				|| _session->local().isPeerTrustedOpenWebView(_bot->id)))) {
 		done(writeAccess);
 		return;
 	}
@@ -2715,13 +2714,18 @@ void AttachWebView::requestAddToMenu(
 			*i = *parsed;
 		}
 		const auto types = parsed->types;
+		const auto addedCallback = [=](bool added) {
+			const auto result = added
+				? AddToMenuResult::Added
+				: AddToMenuResult::Cancelled;
+			finish(result, types);
+		};
 		if (parsed->inactive) {
-			confirmAddToMenu(*parsed, [=](bool added) {
-				const auto result = added
-					? AddToMenuResult::Added
-					: AddToMenuResult::Cancelled;
-				finish(result, types);
-			});
+			if (bot->isOldWalletBot()) {
+				toggleInMenu(bot, ToggledState::Added, addedCallback);
+			} else {
+				confirmAddToMenu(*parsed, addedCallback);
+			}
 		} else {
 			requestBots();
 			finish(AddToMenuResult::AlreadyInMenu, types);
@@ -2795,7 +2799,9 @@ void AttachWebView::acceptMainMenuDisclaimer(
 	} else if (i->inactive) {
 		requestAddToMenu(bot, std::move(done));
 		return;
-	} else if (!i->disclaimerRequired || disclaimerAccepted(*i)) {
+	} else if (!i->disclaimerRequired
+		|| bot->isOldWalletBot()
+		|| disclaimerAccepted(*i)) {
 		done(AddToMenuResult::AlreadyInMenu, i->types);
 		return;
 	}
@@ -2942,7 +2948,7 @@ void ChooseAndSendLocation(
 		const auto strong = weak.get();
 		const auto ephemeralReply = session->ephemeralMessages()
 			.isEphemeralBotReply(action.replyTo.messageId);
-		if (strong && !ephemeralReply) {
+		if (strong && !ephemeralReply && !BotUse::Selected(action.history)) {
 			const auto withPaymentApproved = [=](int stars) {
 				if (const auto onstack = state->send) {
 					auto copy = action;
@@ -2998,6 +3004,7 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 		parent,
 		st::dropdownMenuWithIcons);
 	const auto bots = &peer->session().attachWebView();
+	const auto botUse = BotUse::Selected(peer->owner().history(peer->id));
 	const auto raw = result.get();
 	auto minimal = 0;
 	if (Data::CanSend(peer, ChatRestriction::SendPhotos, false)) {
@@ -3043,7 +3050,8 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 				});
 		}, &st::menuIconLinks);
 	}
-	if (peer->canCreatePolls(false)) {
+	const auto moneyIndex = int(raw->actions().size());
+	if (!botUse && peer->canCreatePolls(false)) {
 		++minimal;
 		raw->addAction(tr::lng_polls_menu_item(tr::now), [=] {
 			const auto action = actionFactory();
@@ -3094,7 +3102,7 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	}
 	const auto session = &controller->session();
 	const auto locationType = ChatRestriction::SendOther;
-	const auto config = ResolveMapsConfig(session);
+	const auto config = Ui::LocationPicker::Config(session);
 	if (Data::CanSendAnyOf(peer, locationType, false)
 		&& Ui::LocationPicker::Available(config)) {
 		raw->addAction(tr::lng_maps_point(tr::now), [=] {
@@ -3102,18 +3110,26 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 			ChooseAndSendLocation(controller, config, actionFactory());
 		}, &st::menuIconAddress);
 	}
-	if (Data::CanSend(peer, ChatRestriction::SendMusic, false)) {
+	if (!botUse && Data::CanSend(peer, ChatRestriction::SendMusic, false)) {
 		++minimal;
 		raw->addAction(tr::lng_all_music(tr::now), [=] {
-			controller->show(Box(MusicAttachBox, controller, peer, actionFactory));
+			const auto box = controller->show(
+				Box(MusicAttachBox, controller, peer, actionFactory));
+			if (const auto strong = box.get()) {
+				QObject::connect(parent, &QObject::destroyed, strong, [=] {
+					strong->closeBox();
+				});
+			}
 		}, &st::menuIconSoundOn);
 	}
-	const auto addBots = Data::CanSend(peer, ChatRestriction::SendInline, false)
+	const auto addBots = !botUse
+		&& Data::CanSend(peer, ChatRestriction::SendInline, false)
 		&& !peer->starsPerMessageChecked();
 	for (const auto &bot : bots->attachBots()) {
 		if (!addBots
 			|| !bot.inAttachMenu
-			|| !PeerMatchesTypes(peer, bot.user, bot.types)) {
+			|| !PeerMatchesTypes(peer, bot.user, bot.types)
+			|| bot.user->isOldWalletBot()) {
 			continue;
 		}
 		const auto callback = [=] {
@@ -3149,6 +3165,89 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 		return nullptr;
 	} else if (actions <= minimal && !onclick) {
 		return nullptr;
+	}
+	if (const auto user = peer->asUser()) {
+		const auto wallet = &session->wallet();
+		const auto userId = peerToUser(user->id);
+		const auto weakSession = base::make_weak(session);
+		const auto weakController = base::make_weak(controller.get());
+		const auto canOffer = [=] {
+			if (!weakSession
+				|| !weakController
+				|| &controller->session() != session
+				|| &user->session() != session
+				|| session->data().userLoaded(userId) != user) {
+				return false;
+			}
+			return Wallet::CanOfferSendMoney(user);
+		};
+		struct MoneyState {
+			QAction *action = nullptr;
+			bool queued = false;
+		};
+		const auto state = raw->lifetime().make_state<MoneyState>();
+		const auto menu = raw->menu();
+		const auto update = [=] {
+			const auto wanted = canOffer();
+			if (wanted == (state->action != nullptr)) {
+				return;
+			}
+			raw->finishAnimating();
+			menu->finishAnimating();
+			menu->clearSelection();
+			if (wanted) {
+				const auto action = Ui::Menu::CreateAction(
+					menu,
+					tr::lng_wallet_menu(tr::now),
+					crl::guard(controller, crl::guard(session, [=] {
+						if (canOffer()) {
+							Wallet::OpenSendMoney(controller, user);
+						}
+					})));
+				state->action = menu->insertAction(
+					moneyIndex,
+					base::make_unique_q<Ui::Menu::Action>(
+						menu,
+						menu->st(),
+						action,
+						&st::walletMenuIcon,
+						&st::walletMenuIcon));
+			} else {
+				state->action = nullptr;
+				menu->removeAction(moneyIndex);
+				const auto &remaining = menu->actions();
+				for (auto i = 0; i != int(remaining.size()); ++i) {
+					menu->itemForAction(remaining[i])->setIndex(i);
+				}
+			}
+		};
+		const auto schedule = [=] {
+			if (state->queued) {
+				return;
+			}
+			state->queued = true;
+			Ui::PostponeCall(raw, [=] {
+				state->queued = false;
+				update();
+			});
+		};
+		wallet->stateKnownValue() | rpl::on_next(schedule, raw->lifetime());
+		session->appConfig().refreshed(
+		) | rpl::on_next(schedule, raw->lifetime());
+		wallet->userAddresses().unavailableValue(
+		) | rpl::on_next(schedule, raw->lifetime());
+		user->flagsValue() | rpl::on_next(schedule, raw->lifetime());
+		session->changes().peerUpdates(
+			user,
+			Data::PeerUpdate::Flag::FullInfo
+				| Data::PeerUpdate::Flag::Name
+				| Data::PeerUpdate::Flag::SupportInfo
+		) | rpl::on_next(schedule, raw->lifetime());
+		raw->setShowStartCallback(update);
+		raw->shownValue() | rpl::filter(rpl::mappers::_1) | rpl::on_next(
+			schedule,
+			raw->lifetime());
+		update();
 	}
 	return result;
 }

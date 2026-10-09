@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_toggling_media.h" // Api::ToggleFavedSticker
 #include "base/qt/qt_key_modifiers.h"
 #include "base/unixtime.h"
+#include "bot_use/bot_use_sending.h"
 #include "history/view/history_view_list_widget.h"
 #include "history/view/controls/history_view_suggest_options.h"
 #include "history/view/history_view_cursor_state.h"
@@ -326,7 +327,9 @@ bool HasEditMessageAction(
 	}
 	const auto peer = item->history()->peer;
 	if (const auto channel = peer->asChannel()) {
-		if (!channel->isMegagroup() && !channel->canEditMessages()) {
+		if (!channel->isMegagroup()
+			&& !channel->canEditMessages()
+			&& !BotUse::RichEditBot(item)) {
 			return false;
 		}
 	}
@@ -572,12 +575,30 @@ MessageIdsList ExtractIdsList(const SelectedItems &items) {
 	) | ranges::to_vector;
 }
 
+History *MenuHistory(const ContextMenuRequest &request) {
+	if (request.history) {
+		return request.history;
+	} else if (request.item) {
+		return request.item->history();
+	} else if (!request.selectedItems.empty()) {
+		const auto item = request.navigation->session().data().message(
+			request.selectedItems.front().msgId);
+		return item ? item->history().get() : nullptr;
+	}
+	return nullptr;
+}
+
 bool AddForwardSelectedAction(
 		not_null<Ui::PopupMenu*> menu,
 		const ContextMenuRequest &request,
 		not_null<ListWidget*> list) {
 	if (!request.overSelection || request.selectedItems.empty()) {
 		return false;
+	}
+	if (const auto history = MenuHistory(request)) {
+		if (BotUse::Selected(history)) {
+			return false;
+		}
 	}
 	if (!ranges::all_of(request.selectedItems, &SelectedItem::canForward)) {
 		return false;
@@ -656,6 +677,7 @@ bool AddForwardMessageAction(
 	if (!request.selectedItems.empty()) {
 		return false;
 	} else if (!item
+		|| BotUse::Selected(MenuHistory(request))
 		|| !item->allowsForward()
 		|| IsAnchoredEphemeral(item)) {
 		return false;
@@ -783,9 +805,20 @@ void AddRepeaterAction(
 	if (!request.selectedItems.empty() || !item) {
 		return;
 	}
+	const auto history = MenuHistory(request);
+	const auto context = list->elementContext();
+	if (BotUse::Selected(history)) {
+		if (context == Context::History
+			|| context == Context::Monoforum
+			|| (context == Context::Replies && item->topic())) {
+			if (!AddBotUseRepeaterAction(menu, history, item)) {
+				return;
+			}
+		}
+		return;
+	}
 	const auto itemId = item->fullId();
 	const auto _history = item->history();
-	const auto context = list->elementContext();
 	auto repeatSubmenu = std::make_unique<Ui::PopupMenu>(list, st::popupMenuWithIcons);
 	if ((item->history()->peer->isMegagroup() || item->history()->peer->isChat() || item->history()->peer->isUser())) {
 		if (EnhancedSettings::HasExtraContextMenuOption(EnhancedSettings::ExtraContextMenuOption::Repeater)
@@ -1136,6 +1169,10 @@ bool AddReplyToMessageAction(
 			&& context != Context::Monoforum)) {
 		return false;
 	}
+	if (!BotUse::AllowReplyAndRepeat(
+			MenuHistory(request), item)) {
+		return false;
+	}
 	const auto canSendReply = topic
 		? Data::CanSendAnything(topic)
 		: Data::CanSendAnything(peer);
@@ -1257,11 +1294,16 @@ bool AddEditMessageAction(
 		}
 		return base;
 	}();
-	if (!item->allowsEdit(base::unixtime::now())) {
+	if (!item->allowsEdit(base::unixtime::now())
+		&& !BotUse::EditBot(item)
+		&& !BotUse::RichEditBot(item)) {
 		return false;
 	}
 	const auto owner = &item->history()->owner();
 	const auto itemId = item->fullId();
+	const auto bot = item->history()->peer->isMegagroup()
+		? std::make_optional(BotUse::EditBot(item))
+		: std::nullopt;
 	menu->addAction(tr::lng_context_edit_msg(tr::now), [=] {
 		const auto item = owner->message(itemId);
 		if (!item) {
@@ -1271,7 +1313,7 @@ bool AddEditMessageAction(
 			|| Iv::Editor::HasEditWindowFor(&owner->session(), itemId)) {
 			Ui::PreventDelayedActivation();
 		}
-		list->editMessageRequestNotify(item->fullId());
+		list->editMessageRequestNotify(item->fullId(), bot);
 	}, &st::menuIconEdit);
 	return true;
 }
@@ -1391,7 +1433,14 @@ bool AddDeleteSelectedAction(
 	if (!request.overSelection || request.selectedItems.empty()) {
 		return false;
 	}
-	if (!ranges::all_of(request.selectedItems, &SelectedItem::canDelete)) {
+	const auto owner = &request.navigation->session().data();
+	const auto first = owner->message(request.selectedItems.front().msgId);
+	const auto bot = first ? BotUse::DeleteBot(first) : 0;
+	const auto allBot = bot && ranges::all_of(request.selectedItems, [&](const auto &selected) {
+		const auto item = owner->message(selected.msgId);
+		return item && BotUse::CanDeleteAs(item, bot);
+	});
+	if (!allBot && !ranges::all_of(request.selectedItems, &SelectedItem::canDelete)) {
 		return false;
 	}
 
@@ -1415,7 +1464,8 @@ bool AddDeleteSelectedAction(
 		auto items = ExtractIdsList(request.selectedItems);
 		auto box = Box<DeleteMessagesBox>(
 			&request.navigation->session(),
-			std::move(items));
+			std::move(items),
+			allBot ? bot : 0);
 		box->setDeleteConfirmedCallback(clear);
 		request.navigation->parentController()->show(std::move(box));
 	}, &st::menuIconDelete);
@@ -1429,17 +1479,24 @@ bool AddDeleteMessageAction(
 	const auto item = request.item;
 	if (!request.selectedItems.empty()) {
 		return false;
-	} else if (!item || !item->canDelete()) {
+	} else if (!item || (!item->canDelete() && !BotUse::DeleteBot(item))) {
 		return false;
 	}
 	const auto owner = &item->history()->owner();
 	const auto asGroup = (request.pointState != PointState::GroupPart);
+	auto bot = BotUse::DeleteBot(item);
 	if (asGroup) {
 		if (const auto group = owner->groups().find(item)) {
-			if (ranges::any_of(group->items, [](auto item) {
-				return item->isLocal() || !item->canDelete();
+			const auto allBot = bot && ranges::all_of(group->items, [&](auto part) {
+				return BotUse::CanDeleteAs(part, bot);
+			});
+			if (!allBot && ranges::any_of(group->items, [](auto part) {
+				return part->isLocal() || !part->canDelete();
 			})) {
 				return false;
+			}
+			if (!allBot) {
+				bot = 0;
 			}
 		}
 	}
@@ -1451,7 +1508,8 @@ bool AddDeleteMessageAction(
 				if (const auto group = owner->groups().find(item)) {
 					controller->show(Box<DeleteMessagesBox>(
 						&owner->session(),
-						owner->itemsToIds(group->items)));
+						owner->itemsToIds(group->items),
+						bot));
 					return;
 				}
 			}
@@ -1460,7 +1518,7 @@ bool AddDeleteMessageAction(
 				return;
 			}
 			const auto list = HistoryItemsList{ item };
-			if (CanCreateModerateMessagesBox(list)) {
+			if (!bot && CanCreateModerateMessagesBox(list)) {
 				const auto opt = DefaultModerateMessagesBoxOptions();
 				controller->show(Box(
 					CreateModerateMessagesBox,
@@ -1468,7 +1526,7 @@ bool AddDeleteMessageAction(
 					nullptr,
 					opt));
 			} else {
-				controller->show(Box<DeleteMessagesBox>(item));
+			controller->show(Box<DeleteMessagesBox>(item, bot));
 			}
 		}
 	});
@@ -2085,6 +2143,54 @@ ContextMenuRequest::ContextMenuRequest(
 : navigation(navigation) {
 }
 
+bool AddBotUseRepeaterAction(
+		not_null<Ui::PopupMenu*> menu,
+		not_null<History*> history,
+		HistoryItem *item) {
+	if (!BotUse::Selected(history)) {
+		return false;
+	}
+	if (!item || !EnhancedSettings::HasExtraContextMenuOption(
+			EnhancedSettings::ExtraContextMenuOption::Repeater)) {
+		return true;
+	}
+	auto submenu = std::make_unique<Ui::PopupMenu>(
+		menu->parentWidget(),
+		st::popupMenuWithIcons);
+	const auto weak = base::make_weak(&history->session());
+	const auto peer = history->peer->id;
+	const auto itemId = item->fullId();
+	for (const auto asForward : { true, false }) {
+		if (!BotUse::CanRepeat(history, item, asForward)) {
+			continue;
+		}
+		submenu->addAction((asForward
+			? tr::lng_context_repeat_msg
+			: tr::lng_context_repeat_msg_no_fwd)(tr::now), [=] {
+			const auto session = weak.get();
+			if (!session) {
+				return;
+			}
+			const auto history = session->data().historyLoaded(peer);
+			if (!history || !BotUse::RepeatMessage(
+					history,
+					itemId,
+					asForward,
+					EnhancedSettings::Get(
+						EnhancedSettings::Option::RepeaterReplyToOriginal))) {
+				return;
+			}
+		}, &st::menuIconDiscussion);
+	}
+	if (!submenu->empty()) {
+		menu->addAction(
+			tr::lng_context_repeater(tr::now),
+			std::move(submenu),
+			&st::menuIconDiscussion);
+	}
+	return true;
+}
+
 void FillContextMenuItems(
 		not_null<Ui::PopupMenu*> result,
 		not_null<ListWidget*> list,
@@ -2120,6 +2226,7 @@ void FillContextMenuItems(
 			? Data::CanSendAnything(topic)
 			: Data::CanSendAnything(peer);
 		if (canSendText
+			&& BotUse::AllowReplyAndRepeat(MenuHistory(request), item)
 			&& (item->isRegular() || CanReplyToEphemeral(item))
 			&& document
 			&& document->isVoiceMessage()) {
@@ -2200,30 +2307,16 @@ void FillContextMenuItems(
 			result->addAction(tr::lng_profile_copy_phone(tr::now), [=] {
 				QGuiApplication::clipboard()->setText(phone);
 			}, &st::menuIconCopy);
-		} else if (const auto gift = itemMedia
-			? itemMedia->gift()
-			: nullptr) {
-			const auto peer = view->data()->history()->peer;
-			const auto user = peer->asUser();
-			if (!user
-				|| (!user->isInaccessible()
-					&& !user->isNotificationsUser())) {
-				const auto controller = list->controller();
-				const auto starGiftUpgrade = gift->upgrade
-					&& (gift->type == Data::GiftType::StarGift);
-				const auto isGift = gift->slug.isEmpty() || !gift->channel;
-				const auto out = view->data()->out();
-				const auto outgoingGift = isGift
-					&& (starGiftUpgrade ? !out : out);
-				if (outgoingGift
-					&& gift->type != Data::GiftType::BirthdaySuggest) {
-					result->addAction(
-						tr::lng_context_gift_send(tr::now),
-						crl::guard(controller, [=] {
-							Ui::ShowStarGiftBox(controller, peer);
-						}),
-						&st::menuIconGiftPremium);
-				}
+		} else if (itemMedia && itemMedia->gift()) {
+			AddGiftMessageAction(result, view->data(), list->controller());
+		}
+		if (view->data()->isRegular()
+			&& view->data()->Has<HistoryServiceGramTransfer>()) {
+			if (const auto user = view->data()->history()->peer->asUser()) {
+				Window::AddSendMoneyAction(
+					list->controller(),
+					user,
+					Ui::Menu::CreateAddActionCallback(result));
 			}
 		}
 		if (const auto document = media ? media->getDocument() : nullptr) {
@@ -2707,6 +2800,43 @@ void AttachPollOptionTabs(
 			reposition();
 		}
 	}, tabs->lifetime());
+}
+
+void AddGiftMessageAction(
+		not_null<Ui::PopupMenu*> menu,
+		not_null<HistoryItem*> item,
+		not_null<Window::SessionController*> controller) {
+	const auto media = item->media();
+	const auto gift = media ? media->gift() : nullptr;
+	if (!gift || gift->type == Data::GiftType::BirthdaySuggest) {
+		return;
+	}
+	const auto peer = item->history()->peer;
+	const auto user = peer->asUser();
+	const auto isGift = gift->slug.isEmpty() || !gift->channel;
+	if (!isGift
+		|| (user
+			&& (user->isInaccessible() || user->isNotificationsUser()))) {
+		return;
+	}
+	const auto starGiftUpgrade = gift->upgrade
+		&& (gift->type == Data::GiftType::StarGift);
+	const auto out = item->out();
+	const auto outgoingGift = starGiftUpgrade ? !out : out;
+	if (!outgoingGift
+		&& (gift->type == Data::GiftType::ChatTheme
+			|| gift->type == Data::GiftType::GiftOffer
+			|| !Ui::CanSendStarGiftTo(peer))) {
+		return;
+	}
+	menu->addAction(
+		(outgoingGift
+			? tr::lng_context_gift_send(tr::now)
+			: tr::lng_gift_send_title(tr::now)),
+		crl::guard(controller, [=] {
+			Ui::ShowStarGiftBox(controller, peer);
+		}),
+		&st::menuIconGiftPremium);
 }
 
 void AddPollActions(

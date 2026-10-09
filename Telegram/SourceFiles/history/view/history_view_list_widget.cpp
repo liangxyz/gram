@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_list_widget.h"
 
+#include "bot_use/bot_use_sending.h"
+
 #include "history/view/history_view_about_view.h"
 #include "base/unixtime.h"
 #include "base/qt/qt_key_modifiers.h"
@@ -17,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item_helpers.h"
 #include "history/history_item_text.h"
 #include "history/history_streamed_drafts.h"
+#include "history/view/media/history_view_gram_transfer.h"
 #include "history/view/media/history_view_media.h"
 #include "history/view/media/history_view_sticker.h"
 #include "history/view/reactions/history_view_reactions.h"
@@ -405,10 +408,14 @@ void ListWidget::enumerateUserpics(Method method) {
 			}
 			// Attach userpic to the bottom of the visible area with the same margin as the last message.
 			auto userpicMinBottomSkip = st::historyPaddingBottom + st::msgMargin.bottom();
-			auto userpicBottom = qMin(itembottom - view->marginBottom(), _visibleBottom - userpicMinBottomSkip);
+			auto userpicBottom = std::min(
+				itembottom - view->marginBottom(),
+				_visibleBottom - userpicMinBottomSkip);
 
 			// Do not let the userpic go above the attached messages pack top line.
-			userpicBottom = qMax(userpicBottom, lowestAttachedItemTop + st::msgPhotoSize);
+			userpicBottom = std::max(
+				userpicBottom,
+				lowestAttachedItemTop + st::msgPhotoSize);
 
 			// Call the template callback function that was passed
 			// and return if it finished everything it needed.
@@ -451,11 +458,14 @@ void ListWidget::enumerateDates(Method method) {
 				itemtop);
 
 			// Attach date to the top of the visible area with the same margin as it has in service message.
-			auto dateTop = qMax(itemtop - collapsed, _visibleTop) + st::msgServiceMargin.top();
+			auto dateTop = std::max(itemtop - collapsed, _visibleTop)
+				+ st::msgServiceMargin.top();
 
 			// Do not let the date go below the single-day messages pack bottom line.
 			auto dateHeight = st::msgServicePadding.bottom() + st::msgServiceFont->height + st::msgServicePadding.top();
-			dateTop = qMin(dateTop, lowestInOneDayItemBottom - dateHeight);
+			dateTop = std::min(
+				dateTop,
+				lowestInOneDayItemBottom - dateHeight);
 
 			// Call the template callback function that was passed
 			// and return if it finished everything it needed.
@@ -507,11 +517,14 @@ void ListWidget::enumerateForumThreadBars(Method method) {
 				lowestInOneBunchItemBottom = itembottom - view->marginBottom();
 			}
 			// Attach bar to the top of the visible area with the same margin as it has in service message.
-			int barTop = qMax(itemtop + view->displayedDateHeight(), _visibleTop + skip) + st::msgServiceMargin.top();
+			int barTop = std::max(
+				itemtop + view->displayedDateHeight(),
+				_visibleTop + skip)
+				+ st::msgServiceMargin.top();
 
 			// Do not let the bar go below the single-bar messages pack bottom line.
 			int barHeight = st::msgServicePadding.bottom() + st::msgServiceFont->height + st::msgServicePadding.top();
-			barTop = qMin(barTop, lowestInOneBunchItemBottom - barHeight);
+			barTop = std::min(barTop, lowestInOneBunchItemBottom - barHeight);
 
 			// Call the template callback function that was passed
 			// and return if it finished everything it needed.
@@ -2694,6 +2707,14 @@ bool ListWidget::elementHideTopicButton(not_null<const Element*> view) {
 	return _delegate->listElementHideTopicButton(view);
 }
 
+GramReadLine *ListWidget::elementGramReadLine() {
+	if (!_gramReadLine) {
+		_gramReadLine = std::make_unique<GramReadLine>([=] {
+			update();
+		});
+	}
+	return _gramReadLine.get();
+}
 
 void ListWidget::saveState(not_null<ListMemento*> memento) {
 	memento->setAroundPosition(_aroundPosition);
@@ -4082,6 +4103,11 @@ void ListWidget::mouseDoubleClickEvent(QMouseEvent *e) {
 void ListWidget::toggleFavoriteReaction(not_null<Element*> view) const {
 	const auto item = view->data();
 	const auto favorite = session().data().reactions().favoriteId();
+	if (favorite.custom()
+		&& item->history()->peer->isMegagroup()
+		&& BotUse::Selected(item->history())) {
+		return;
+	}
 	if (_delegate->listShowReactPremiumError(item, favorite)
 		|| !ranges::contains(
 			Data::LookupPossibleReactions(item).recent,
@@ -4281,6 +4307,7 @@ void ListWidget::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 	request.link = link;
 	request.view = _overElement;
 	request.item = overItem;
+	request.history = _delegate->listTranslateHistory();
 	request.pointState = _overState.pointState;
 	request.quote = (_overElement
 		&& _selectedTextItem == _overElement->data())
@@ -4335,6 +4362,10 @@ void ListWidget::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 void ListWidget::reactionChosen(ChosenReaction reaction) {
 	const auto item = session().data().message(reaction.context);
 	if (!item) {
+		return;
+	} else if (reaction.id.custom()
+		&& item->history()->peer->isMegagroup()
+		&& BotUse::Selected(item->history())) {
 		return;
 	} else if (reaction.id.paid()) {
 		Payments::ShowPaidReactionDetails(
@@ -4431,8 +4462,14 @@ void ListWidget::touchUpdateSpeed() {
 
 			// fingers are inacurates, we ignore small changes to avoid stopping the autoscroll because
 			// of a small horizontal offset when scrolling vertically
-			const int newSpeedY = (qAbs(pixelsPerSecond.y()) > Ui::kFingerAccuracyThreshold) ? pixelsPerSecond.y() : 0;
-			const int newSpeedX = (qAbs(pixelsPerSecond.x()) > Ui::kFingerAccuracyThreshold) ? pixelsPerSecond.x() : 0;
+			const int newSpeedY = (std::abs(pixelsPerSecond.y())
+				> Ui::kFingerAccuracyThreshold)
+				? pixelsPerSecond.y()
+				: 0;
+			const int newSpeedX = (std::abs(pixelsPerSecond.x())
+				> Ui::kFingerAccuracyThreshold)
+				? pixelsPerSecond.x()
+				: 0;
 			if (_touchScrollState == Ui::TouchScrollState::Auto) {
 				const int oldSpeedY = _touchSpeed.y();
 				const int oldSpeedX = _touchSpeed.x();
@@ -4480,8 +4517,16 @@ void ListWidget::touchResetSpeed() {
 void ListWidget::touchDeaccelerate(int32 elapsed) {
 	int32 x = _touchSpeed.x();
 	int32 y = _touchSpeed.y();
-	_touchSpeed.setX((x == 0) ? x : (x > 0) ? qMax(0, x - elapsed) : qMin(0, x + elapsed));
-	_touchSpeed.setY((y == 0) ? y : (y > 0) ? qMax(0, y - elapsed) : qMin(0, y + elapsed));
+	_touchSpeed.setX((x == 0)
+		? x
+		: (x > 0)
+		? std::max(0, x - elapsed)
+		: std::min(0, x + elapsed));
+	_touchSpeed.setY((y == 0)
+		? y
+		: (y > 0)
+		? std::max(0, y - elapsed)
+		: std::min(0, y + elapsed));
 }
 
 void ListWidget::touchEvent(QTouchEvent *e) {
@@ -5305,7 +5350,11 @@ void ListWidget::mouseActionUpdate() {
 					auto dateLeft = st::msgServiceMargin.left();
 					auto maxwidth = view->width();
 					if (_isChatWide) {
-						maxwidth = qMin(maxwidth, int32(st::msgMaxWidth + 2 * st::msgPhotoSkip + 2 * st::msgMargin.left()));
+						maxwidth = std::min(
+							maxwidth,
+							int32(st::msgMaxWidth
+								+ 2 * st::msgPhotoSkip
+								+ 2 * st::msgMargin.left()));
 					}
 					auto widthForDate = maxwidth - st::msgServiceMargin.left() - st::msgServiceMargin.left();
 
@@ -5342,7 +5391,11 @@ void ListWidget::mouseActionUpdate() {
 					auto barLeft = st::msgServiceMargin.left();
 					auto maxwidth = view->width();
 					if (_isChatWide) {
-						maxwidth = qMin(maxwidth, int32(st::msgMaxWidth + 2 * st::msgPhotoSkip + 2 * st::msgMargin.left()));
+						maxwidth = std::min(
+							maxwidth,
+							int32(st::msgMaxWidth
+								+ 2 * st::msgPhotoSkip
+								+ 2 * st::msgMargin.left()));
 					}
 					auto widthForBar = maxwidth - st::msgServiceMargin.left() - st::msgServiceMargin.left();
 
@@ -5929,6 +5982,10 @@ void ListWidget::itemRemoved(not_null<const HistoryItem*> item) {
 	if (_selectedTextItem == item) {
 		clearTextSelection();
 	}
+	const auto selected = _selected.find(item->fullId());
+	if (selected != end(_selected)) {
+		removeItemSelection(selected);
+	}
 	if (_overItemExact == item) {
 		_overItemExact = nullptr;
 	}
@@ -5984,12 +6041,14 @@ QPoint ListWidget::mapPointToItem(
 		- QPoint(SelectionViewOffset(this, view), itemTop(view));
 }
 
-rpl::producer<FullMsgId> ListWidget::editMessageRequested() const {
+rpl::producer<ListWidget::EditMessageRequest> ListWidget::editMessageRequested() const {
 	return _requestedToEditMessage.events();
 }
 
-void ListWidget::editMessageRequestNotify(FullMsgId item) const {
-	_requestedToEditMessage.fire(std::move(item));
+void ListWidget::editMessageRequestNotify(
+		FullMsgId item,
+		std::optional<uint64> bot) const {
+	_requestedToEditMessage.fire({ item, bot });
 }
 
 bool ListWidget::lastMessageEditRequestNotify() const {
@@ -6282,7 +6341,7 @@ void ListWidget::changeAccessibilitySelection(
 	clearTextSelection();
 	repaintItem(view);
 	pushSelectedItems();
-	accessibilityChildStateChanged(index, { .selected = true });
+	accessibilityChildSelectionChanged(index);
 	accessibilityChildNameChanged(index);
 }
 
@@ -6432,6 +6491,16 @@ QAccessible::State ListWidget::accessibilityChildState(int index) const {
 
 QAccessible::Role ListWidget::accessibilityChildRole() const {
 	return QAccessible::Role::ListItem;
+}
+
+QAccessible::Role ListWidget::accessibilityChildRoleAt(int index) const {
+	// The unread bar divides the read messages from the unread ones, it
+	// is not a message itself - a separator to a screen reader, which also
+	// keeps it out of the selection and the item count.
+	const auto barIndex = accessibilityUnreadBarIndex();
+	return (barIndex >= 0 && index == barIndex)
+		? QAccessible::Role::Separator
+		: accessibilityChildRole();
 }
 
 QRect ListWidget::accessibilityChildRect(int index) const {

@@ -92,6 +92,7 @@ struct WidgetServices {
 	not_null<Main::Session*> session;
 	std::shared_ptr<Main::SessionShow> show;
 	not_null<QWidget*> outer;
+	bool premiumOverride = false;
 	Fn<bool()> customEmojiPaused;
 	Fn<void(
 		not_null<Widget*>,
@@ -113,6 +114,7 @@ struct WidgetServices {
 	Fn<void(not_null<Widget*>, uint64 /*mediaId*/)> cancelMediaUpload;
 	Fn<void(not_null<Widget*>, State::BlockPath, QPointer<QWidget>)>
 		addMediaAndGroupWithBlock;
+	Fn<void()> submit;
 	rpl::producer<> imeCompositionStarts;
 };
 
@@ -147,6 +149,7 @@ public:
 	void insertPreparedBlock(RichPage::Block block);
 	void replacePreparedBlock(State::ReplaceTarget target, RichPage::Block block);
 	void insertPreparedBlocks(std::vector<RichPage::Block> blocks);
+	void pasteImportedBlocks(BlocksImportResult &&imported);
 	void pasteStructuredClipboardData(const ClipboardData &data);
 	[[nodiscard]] bool hasActiveSelection() const;
 	[[nodiscard]] rpl::producer<bool> hasSelectionValue() const;
@@ -626,6 +629,7 @@ private:
 	void applyStructuralMonospaceAction();
 	void insertCodeBlock();
 	[[nodiscard]] bool handleFieldKey(QKeyEvent *e);
+	[[nodiscard]] bool handleSubmitShortcut(QKeyEvent *e);
 
 	[[nodiscard]] bool handleFieldInputRule(QKeyEvent *e);
 	[[nodiscard]] bool undoLastInputRule();
@@ -683,7 +687,6 @@ private:
 		const BlocksImportResult &imported,
 		not_null<const QMimeData*> data) const
 	-> std::optional<BlocksImportResult>;
-	void pasteImportedBlocks(BlocksImportResult &&imported);
 	void resolveImportedLocalMedia(BlocksImportResult &&imported);
 	[[nodiscard]] bool handleIvClipboardMime(
 		not_null<const QMimeData*> data,
@@ -993,6 +996,7 @@ private:
 	const not_null<Main::Session*> _session;
 	const std::shared_ptr<Main::SessionShow> _show;
 	const not_null<QWidget*> _outer;
+	const bool _premiumOverride = false;
 	const Fn<bool()> _customEmojiPaused;
 	const Fn<void(
 		not_null<Widget*>,
@@ -1015,6 +1019,7 @@ private:
 	const Fn<void(not_null<Widget*>, uint64)> _cancelMediaUpload;
 	const Fn<void(not_null<Widget*>, State::BlockPath, QPointer<QWidget>)>
 		_addMediaAndGroupWithBlock;
+	const Fn<void()> _submit;
 	const not_null<PeerData*> _peer;
 	const std::shared_ptr<State> _state;
 	const Fn<void(RichMessageLimitError)> _showLimitToast;
@@ -1081,6 +1086,7 @@ private:
 	bool _settingField = false;
 	bool _preparedContentStaleAfterCommit = false;
 	bool _trackingPointerPress = false;
+	bool _fieldBandSelecting = false;
 	bool _inlineFieldExternalInteractionActive = false;
 	bool _keyboardStructuralSelectionActive = false;
 	Markdown::MarkdownArticleEditControlHit _pressedControl;

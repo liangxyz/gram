@@ -30,7 +30,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "mtproto/sender.h"
 #include "spellcheck/platform/platform_language.h"
-#include "translate/google_translate.h"
 #include "ui/boxes/choose_language_box.h"
 #include "ui/effects/loading_element.h"
 #include "ui/layers/generic_box.h"
@@ -54,52 +53,6 @@ namespace Ui {
 namespace {
 
 constexpr auto kSkipAtLeastOneDuration = 3 * crl::time(1000);
-
-enum class TranslateBoxProvider {
-	Default,
-	Google,
-};
-
-class GoogleTranslateProvider final : public QObject, public TranslateProvider {
-public:
-	[[nodiscard]] bool supportsMessageId() const override {
-		return false;
-	}
-
-	void request(
-			TranslateProviderRequest request,
-			LanguageId to,
-			Fn<void(TranslateProviderResult)> done) override {
-		if (request.text.text.isEmpty()) {
-			done(TranslateProviderResult{
-				.error = TranslateProviderError::Unknown,
-			});
-			return;
-		}
-		_translate.translate(
-			u"auto"_q,
-			TranslateProviderTargetCode(to),
-			request.text.text,
-			[done = std::move(done)](TranslationResult result) {
-				done(result.success
-					? TranslateProviderResult{
-						.text = TextWithEntities{ .text = result.text },
-					}
-					: TranslateProviderResult{
-						.error = TranslateProviderError::Unknown,
-					});
-			});
-	}
-
-private:
-	GTranslate _translate;
-};
-
-[[nodiscard]] QString TranslateProviderLabel(TranslateBoxProvider provider) {
-	return (provider == TranslateBoxProvider::Google)
-		? tr::lng_settings_use_gt_api(tr::now)
-		: tr::lng_settings_notifications_display_default(tr::now);
-}
 
 void ActivateRichTranslateLink(
 		not_null<Iv::Markdown::MarkdownDocumentWidget*> body,
@@ -456,9 +409,6 @@ void SetupRichArticleBody(
 	std::move(to) | rpl::on_next(send, box->lifetime());
 
 	box->addLeftButton(tr::lng_settings_language(), [=] {
-		if (loading->toggled()) {
-			return;
-		}
 		box->uiShow()->showBox(ChooseTranslateToBox(
 			state->to.current(),
 			crl::guard(box, [=](LanguageId id) { state->to = id; })));
@@ -475,24 +425,24 @@ void TranslateBox(
 		TextWithEntities text,
 	bool hasCopyRestriction) {
 	struct State {
-		State(not_null<Main::Session*> session)
-		: defaultProvider(CreateTranslateProvider(session))
-		, googleProvider(std::make_unique<GoogleTranslateProvider>()) {
+		State(
+			not_null<Main::Session*> session,
+			not_null<GenericBox*> box)
+		: providerId(SelectedTranslateProviderId())
+		, provider(CreateTranslateProvider(
+			session,
+			crl::guard(box, [=](QString error) {
+				box->showToast(error);
+			}))) {
 		}
 
-		std::unique_ptr<TranslateProvider> defaultProvider;
-		std::unique_ptr<TranslateProvider> googleProvider;
+		QString providerId;
+		std::unique_ptr<TranslateProvider> provider;
 		rpl::variable<LanguageId> to;
-		rpl::variable<TranslateBoxProvider> provider;
-		rpl::event_stream<> refreshRequests;
 	};
-	const auto state = box->lifetime().make_state<State>(&peer->session());
-	state->provider = EnhancedSettings::Get(EnhancedSettings::Option::UseGtApi)
-		? TranslateBoxProvider::Google
-		: TranslateBoxProvider::Default;
-	if (IsServerMsgId(msgId)
-		&& state->provider.current() == TranslateBoxProvider::Default
-		&& state->defaultProvider->supportsMessageId()) {
+	const auto state = box->lifetime().make_state<State>(
+		&peer->session(), box);
+	if (IsServerMsgId(msgId)) {
 		if (const auto item = peer->owner().message(peer->id, msgId)) {
 			if (const auto page = item->richPage()) {
 				if (TranslateRichBox(
@@ -508,11 +458,6 @@ void TranslateBox(
 		}
 	}
 	state->to = ChooseTranslateTo(peer->owner().history(peer));
-	const auto requestProvider = [=]() -> not_null<TranslateProvider*> {
-		return (state->provider.current() == TranslateBoxProvider::Google)
-			? not_null{ state->googleProvider.get() }
-			: not_null{ state->defaultProvider.get() };
-	};
 
 	TranslateBoxContent(box, {
 		.text = text,
@@ -520,29 +465,21 @@ void TranslateBox(
 		.textContext = Core::TextContext({ .session = &peer->session() }),
 		.currentTo = state->to.current(),
 		.to = state->to.value(),
-		.provider = state->provider.value() | rpl::map([](
-				TranslateBoxProvider provider) {
-			return TranslateProviderLabel(provider);
-		}),
-		.refresh = state->refreshRequests.events(),
 		.chooseTo = [=] {
 			box->uiShow()->showBox(ChooseTranslateToBox(
 				state->to.current(),
 				crl::guard(box, [=](LanguageId id) { state->to = id; })));
 		},
-		.chooseProvider = EnhancedSettings::Get(EnhancedSettings::Option::UseGtApi)
-			? Fn<void()>([=] {
-				state->provider = (state->provider.current()
-					== TranslateBoxProvider::Google)
-					? TranslateBoxProvider::Default
-					: TranslateBoxProvider::Google;
-				state->refreshRequests.fire({});
-			})
-			: Fn<void()>(),
 		.request = [=](
 				LanguageId to,
 				Fn<void(TranslateBoxContentResult)> done) {
-			const auto provider = requestProvider();
+			if (!TranslateProviderAvailable(state->providerId)) {
+				done(TranslateBoxContentResult{
+					.error = TranslateBoxContentError::Unavailable,
+				});
+				return;
+			}
+			const auto provider = not_null{ state->provider.get() };
 			provider->request(
 				PrepareTranslateProviderRequest(
 					provider,

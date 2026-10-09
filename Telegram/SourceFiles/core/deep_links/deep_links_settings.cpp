@@ -40,6 +40,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/settings/info_settings_widget.h"
 #include "info/stories/info_stories_widget.h"
 #include "lang/lang_keys.h"
+#include "lang/translate_llm_settings.h"
 #include "ui/boxes/peer_qr_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/toast/toast.h"
@@ -49,6 +50,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_active_sessions.h"
 #include "settings/sections/settings_advanced.h"
 #include "settings/sections/settings_blocked_peers.h"
+#include "settings/sections/settings_bot_use.h"
 #include "settings/sections/settings_business.h"
 #include "settings/sections/settings_calls.h"
 #include "settings/sections/settings_chat.h"
@@ -145,7 +147,9 @@ void ShowChatEnhancedValue(
 				close();
 				::Settings::ShowChatEnhancedSettings(controller, peer, feature);
 				controller->showToast({
-					.text = tr::lng_settings_shared_value_applied(tr::now),
+					.text = tr::lng_settings_shared_value_applied(
+						tr::now,
+						tr::marked),
 					.iconLottie = u"toast/contact_check"_q,
 					.iconLottieSize = st::toastLottieIconSize,
 				});
@@ -241,7 +245,7 @@ Result HandleEnhancedValue(
 					EnhancedSettings::ControlId(pending.id));
 				controller->showSettings(::Settings::EnhancedId());
 				controller->showToast({
-					.text = std::move(toast),
+					.text = tr::marked(std::move(toast)),
 					.iconLottie = u"toast/contact_check"_q,
 					.iconLottieSize = st::toastLottieIconSize,
 				});
@@ -395,7 +399,7 @@ Result ShowMyProfile(const Context &ctx) {
 		return Result::NeedsAuth;
 	}
 	ctx.controller->showSection(
-		Info::Stories::Make(ctx.controller->session().user()));
+		Info::Stories::MakeMyProfile(ctx.controller->session().user()));
 	return Result::Handled;
 }
 
@@ -775,7 +779,7 @@ void RegisterSettingsHandlers(Router &router) {
 			ctx.controller->setHighlightControlId(highlight);
 		}
 		const auto &local = ctx.controller->session().domain().local();
-		if (local.hasLocalPasscode()) {
+		if (local.hasPasscode()) {
 			ctx.controller->showSettings(::Settings::LocalPasscodeCheckId());
 		} else {
 			ctx.controller->showSettings(::Settings::LocalPasscodeCreateId());
@@ -1936,6 +1940,25 @@ void RegisterSettingsHandlers(Router &router) {
 	});
 
 	router.add(u"settings"_q, {
+		.path = ::Settings::BotUseSettingsPath(),
+		.action = SettingsSection{ ::Settings::BotUseSettingsId() },
+	});
+
+	for (const auto &descriptor : BotUse::Settings::Descriptors()) {
+		const auto controlId = BotUse::Settings::ControlId(descriptor.id);
+		if (controlId.isEmpty()) {
+			continue;
+		}
+		router.add(u"settings"_q, {
+			.path = controlId,
+			.action = SettingsControl{
+				::Settings::BotUseSettingsId(),
+				controlId,
+			},
+		});
+	}
+
+	router.add(u"settings"_q, {
 		.path = u"enhanced"_q,
 		.action = SettingsSection{
 			::Settings::EnhancedId(),
@@ -1962,6 +1985,52 @@ void RegisterSettingsHandlers(Router &router) {
 			},
 		});
 	}
+
+	router.add(u"settings"_q, {
+		.path = u"enhanced/llm-translate"_q,
+		.action = CodeBlock{ [](const Context &ctx) {
+			if (!ctx.controller) {
+				return Result::NeedsAuth;
+			}
+			const auto payload = ctx.params.value(u"config"_q);
+			if (payload.isEmpty()) {
+				ctx.controller->setHighlightControlId(
+					u"enhanced/llm-translate"_q);
+				ctx.controller->showSettings(::Settings::EnhancedId());
+				return Result::Handled;
+			}
+			const auto config = Ui::ParseLLMTranslateSharePayload(payload);
+			if (!config) {
+				return Result::Unsupported;
+			}
+			const auto controller = ctx.controller;
+			controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+				Ui::ConfirmBox(box, Ui::ConfirmBoxArgs{
+					.text = tr::lng_settings_apply_shared_value(
+						tr::now,
+						lt_option,
+						tr::bold(tr::lng_translate_llm_config(tr::now)),
+						tr::rich),
+					.confirmed = [=](Fn<void()> close) {
+						Ui::SaveLLMTranslateConfig(*config);
+						controller->setHighlightControlId(
+							u"enhanced/llm-translate"_q);
+						controller->showSettings(::Settings::EnhancedId());
+						controller->showToast({
+							.text = tr::marked(
+								tr::lng_settings_shared_value_applied(tr::now)),
+							.iconLottie = u"toast/contact_check"_q,
+							.iconLottieSize = st::toastLottieIconSize,
+						});
+						close();
+					},
+					.confirmText = tr::lng_settings_apply(),
+					.title = tr::lng_settings_apply_shared_value_title(),
+				});
+			}));
+			return Result::Handled;
+		}},
+	});
 
 	router.add(u"settings"_q, {
 		.path = u"enhanced/show-server-config"_q,

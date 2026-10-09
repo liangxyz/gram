@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_inner_widget.h"
 
 #include "api/api_polls.h"
+#include "bot_use/bot_use_sending.h"
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "core/application.h"
 #include "core/enhanced_settings.h"
@@ -21,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/controls/history_view_forward_panel.h"
 #include "history/view/controls/history_view_draft_options.h"
 #include "history/view/controls/history_view_suggest_options.h"
+#include "history/view/media/history_view_gram_transfer.h"
 #include "history/view/media/history_view_save_document_action.h"
 #include "history/view/media/history_view_sticker.h"
 #include "history/view/media/history_view_web_page.h"
@@ -78,7 +80,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/moderate_messages_box.h"
 #include "boxes/report_messages_box.h"
 #include "boxes/send_gif_with_caption_box.h"
-#include "boxes/star_gift_box.h" // ShowStarGiftBox
 #include "boxes/sticker_set_box.h"
 #include "boxes/translate_box.h"
 #include "chat_helpers/message_field.h"
@@ -366,6 +367,10 @@ public:
 		return false;
 	}
 
+	HistoryView::GramReadLine *elementGramReadLine() override {
+		return _widget ? _widget->elementGramReadLine() : nullptr;
+	}
+
 	not_null<HistoryView::ElementDelegate*> delegate() override {
 		return this;
 	}
@@ -587,6 +592,10 @@ void HistoryInner::reactionChosen(const ChosenReaction &reaction) {
 	const auto item = session().data().message(reaction.context);
 	if (!item) {
 		return;
+	} else if (reaction.id.custom()
+		&& item->history()->peer->isMegagroup()
+		&& BotUse::Selected(item->history())) {
+		return;
 	} else if (reaction.id.paid()) {
 		Payments::ShowPaidReactionDetails(
 			_controller,
@@ -778,7 +787,9 @@ void HistoryInner::setupSwipeReplyAndBack() {
 					&& (!view->data()->isEphemeral()
 						|| view->data()->out()))
 				|| view->data()->showSimilarChannels()
-				|| view->data()->isService()) {
+				|| (view->data()->isService()
+					&& !HistoryView::ServiceAllowsSwipeReply(
+						view->data()))) {
 				return true;
 			}
 			const auto item = lookupItemByPoint(
@@ -1118,10 +1129,14 @@ void HistoryInner::enumerateUserpics(Method method) {
 			}
 			// Attach userpic to the bottom of the visible area with the same margin as the last message.
 			auto userpicMinBottomSkip = _historyMarginBottom + st::msgMargin.bottom();
-			auto userpicBottom = qMin(itembottom - view->marginBottom(), _visibleAreaBottom - userpicMinBottomSkip);
+			auto userpicBottom = std::min(
+				itembottom - view->marginBottom(),
+				_visibleAreaBottom - userpicMinBottomSkip);
 
 			// Do not let the userpic go above the attached messages pack top line.
-			userpicBottom = qMax(userpicBottom, lowestAttachedItemTop + st::msgPhotoSize);
+			userpicBottom = std::max(
+				userpicBottom,
+				lowestAttachedItemTop + st::msgPhotoSize);
 
 			// Call the template callback function that was passed
 			// and return if it finished everything it needed.
@@ -1174,11 +1189,14 @@ void HistoryInner::enumerateDates(Method method) {
 				itemtop);
 
 			// Attach date to the top of the visible area with the same margin as it has in service message.
-			int dateTop = qMax(itemtop - collapsed, _visibleAreaTop) + st::msgServiceMargin.top();
+			int dateTop = std::max(itemtop - collapsed, _visibleAreaTop)
+				+ st::msgServiceMargin.top();
 
 			// Do not let the date go below the single-day messages pack bottom line.
 			int dateHeight = st::msgServicePadding.bottom() + st::msgServiceFont->height + st::msgServicePadding.top();
-			dateTop = qMin(dateTop, lowestInOneDayItemBottom - dateHeight);
+			dateTop = std::min(
+				dateTop,
+				lowestInOneDayItemBottom - dateHeight);
 
 			// Call the template callback function that was passed
 			// and return if it finished everything it needed.
@@ -1230,11 +1248,14 @@ void HistoryInner::enumerateForumThreadBars(Method method) {
 				lowestInOneBunchItemBottom = itembottom - view->marginBottom();
 			}
 			// Attach bar to the top of the visible area with the same margin as it has in service message.
-			int barTop = qMax(itemtop + view->displayedDateHeight(), _visibleAreaTop + skip) + st::msgServiceMargin.top();
+			int barTop = std::max(
+				itemtop + view->displayedDateHeight(),
+				_visibleAreaTop + skip)
+				+ st::msgServiceMargin.top();
 
 			// Do not let the bar go below the single-bar messages pack bottom line.
 			int barHeight = st::msgServicePadding.bottom() + st::msgServiceFont->height + st::msgServicePadding.top();
-			barTop = qMin(barTop, lowestInOneBunchItemBottom - barHeight);
+			barTop = std::min(barTop, lowestInOneBunchItemBottom - barHeight);
 
 			// Call the template callback function that was passed
 			// and return if it finished everything it needed.
@@ -2078,8 +2099,14 @@ void HistoryInner::touchUpdateSpeed() {
 
 			// fingers are inacurates, we ignore small changes to avoid stopping the autoscroll because
 			// of a small horizontal offset when scrolling vertically
-			const int newSpeedY = (qAbs(pixelsPerSecond.y()) > Ui::kFingerAccuracyThreshold) ? pixelsPerSecond.y() : 0;
-			const int newSpeedX = (qAbs(pixelsPerSecond.x()) > Ui::kFingerAccuracyThreshold) ? pixelsPerSecond.x() : 0;
+			const int newSpeedY = (std::abs(pixelsPerSecond.y())
+				> Ui::kFingerAccuracyThreshold)
+				? pixelsPerSecond.y()
+				: 0;
+			const int newSpeedX = (std::abs(pixelsPerSecond.x())
+				> Ui::kFingerAccuracyThreshold)
+				? pixelsPerSecond.x()
+				: 0;
 			if (_touchScrollState == Ui::TouchScrollState::Auto) {
 				const int oldSpeedY = _touchSpeed.y();
 				const int oldSpeedX = _touchSpeed.x();
@@ -2127,8 +2154,16 @@ void HistoryInner::touchResetSpeed() {
 void HistoryInner::touchDeaccelerate(int32 elapsed) {
 	int32 x = _touchSpeed.x();
 	int32 y = _touchSpeed.y();
-	_touchSpeed.setX((x == 0) ? x : (x > 0) ? qMax(0, x - elapsed) : qMin(0, x + elapsed));
-	_touchSpeed.setY((y == 0) ? y : (y > 0) ? qMax(0, y - elapsed) : qMin(0, y + elapsed));
+	_touchSpeed.setX((x == 0)
+		? x
+		: (x > 0)
+		? std::max(0, x - elapsed)
+		: std::min(0, x + elapsed));
+	_touchSpeed.setY((y == 0)
+		? y
+		: (y > 0)
+		? std::max(0, y - elapsed)
+		: std::min(0, y + elapsed));
 }
 
 void HistoryInner::touchEvent(QTouchEvent *e) {
@@ -2851,6 +2886,11 @@ void HistoryInner::mouseDoubleClickEvent(QMouseEvent *e) {
 void HistoryInner::toggleFavoriteReaction(not_null<Element*> view) const {
 	const auto item = view->data();
 	const auto favorite = session().data().reactions().favoriteId();
+	if (favorite.custom()
+		&& item->history()->peer->isMegagroup()
+		&& BotUse::Selected(item->history())) {
+		return;
+	}
 	if (Window::ShowReactPremiumError(_controller, item, favorite)
 		|| !ranges::contains(
 			Data::LookupPossibleReactions(item).recent,
@@ -3124,13 +3164,20 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			}, &st::menuIconViewReplies);
 		}
 		const auto t = base::unixtime::now();
-		const auto editItem = (albumPartItem && albumPartItem->allowsEdit(t))
+		const auto editItem = (albumPartItem
+			&& (albumPartItem->allowsEdit(t)
+				|| BotUse::EditBot(albumPartItem)))
 			? albumPartItem
-			: item->allowsEdit(t)
+			: (item->allowsEdit(t)
+				|| BotUse::EditBot(item)
+				|| BotUse::RichEditBot(item))
 			? item
 			: nullptr;
 		if (editItem) {
 			const auto editItemId = editItem->fullId();
+			const auto editBot = editItem->history()->peer->isMegagroup()
+				? std::make_optional(BotUse::EditBot(editItem))
+				: std::nullopt;
 			_menu->addAction(tr::lng_context_edit_msg(tr::now), [=] {
 				if (const auto item = session->data().message(editItemId)) {
 					const auto selection = getSelectedTextRange(item);
@@ -3143,7 +3190,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 							editItemId)) {
 						Ui::PreventDelayedActivation();
 					}
-					_widget->editMessage(item, selection);
+					_widget->editMessage(item, selection, editBot);
 				}
 			}, &st::menuIconEdit);
 		}
@@ -3433,6 +3480,9 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 					tr::now,
 					Ui::Text::FixAmpersandInAction);
 			const auto replyToItem = selected.item ? selected.item : item;
+			if (!BotUse::AllowReplyAndRepeat(_history, replyToItem)) {
+				return;
+			}
 			const auto itemId = replyToItem->fullId();
 			_menu->addAction(std::move(text), [=] {
 				_widget->replyToMessage({
@@ -3550,7 +3600,9 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			}, &st::menuIconLink);
 		}
 		if (isUponSelected > 1) {
-			if (selectedState.count > 0 && selectedState.canForwardCount == selectedState.count) {
+			if (!BotUse::Selected(_history)
+				&& selectedState.count > 0
+				&& selectedState.canForwardCount == selectedState.count) {
 				_menu->addAction(tr::lng_context_forward_selected(tr::now), [=] {
 					_widget->forwardSelected();
 				}, &st::menuIconForward);
@@ -3603,7 +3655,9 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 					? std::make_unique<Ui::PopupMenu>(this, st::popupMenuWithIcons)
 					: nullptr;
 				auto repeatSubmenu = std::make_unique<Ui::PopupMenu>(this, st::popupMenuWithIcons);
-				if (item->allowsForward() && !IsAnchoredEphemeral(item)) {
+				if (!BotUse::Selected(_history)
+					&& item->allowsForward()
+					&& !IsAnchoredEphemeral(item)) {
 					if (moreForward) {
 						fwdSubmenu->addAction(tr::lng_context_forward_msg_old(tr::now), [=] {
 							oldForwardItem(itemId);
@@ -3620,7 +3674,10 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						}, &st::menuIconForward);
 					}
 				}
-				if ((item->history()->peer->isMegagroup() || item->history()->peer->isChat() || item->history()->peer->isUser())) {
+				if (!HistoryView::AddBotUseRepeaterAction(_menu, _history, item)
+					&& (item->history()->peer->isMegagroup()
+						|| item->history()->peer->isChat()
+						|| item->history()->peer->isUser())) {
 					if (EnhancedSettings::HasExtraContextMenuOption(EnhancedSettings::ExtraContextMenuOption::Repeater)) {
 						if (item->allowsForward()) {
 							repeatSubmenu->addAction(tr::lng_context_repeat_msg(tr::now), [=] {
@@ -3708,7 +3765,10 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						}
 					}
 				}
-				if (moreForward && item->allowsForward() && !IsAnchoredEphemeral(item)) {
+				if (!BotUse::Selected(_history)
+					&& moreForward
+					&& item->allowsForward()
+					&& !IsAnchoredEphemeral(item)) {
 					fwdSubmenu->addAction(tr::lng_forward_to_saved_message(tr::now), [=] {
 						if (item->id <= 0) return;
 						const auto api = &item->history()->peer->session().api();
@@ -3740,8 +3800,9 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 					&& !item->isEmpty()) {
 					HistoryView::AddHideMessageAction(_menu, item);
 				}
-				if (item->canDelete()) {
-					const auto callback = [=] { deleteItem(itemId); };
+			if (item->canDelete() || BotUse::DeleteBot(item)) {
+				const auto bot = BotUse::DeleteBot(item);
+				const auto callback = [=] { deleteItem(itemId, bot); };
 					if (item->isUploading()) {
 						if (item->media()
 							&& item->media()->allowsEditCaption()) {
@@ -3803,7 +3864,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			: albumPartItem;
 		const auto itemId = item ? item->fullId() : FullMsgId();
 		const auto canDelete = item
-			&& item->canDelete()
+			&& (item->canDelete() || BotUse::DeleteBot(item))
 			&& (item->isRegular() || !item->isService());
 		const auto canForward = item
 			&& item->allowsForward()
@@ -3911,37 +3972,26 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						_menu->addAction(tr::lng_profile_copy_phone(tr::now), [=] {
 							QGuiApplication::clipboard()->setText(phone);
 						}, &st::menuIconCopy);
-					} else if (const auto gift = media->gift()) {
-						const auto peer = item->history()->peer;
-						const auto user = peer->asUser();
-						if (!user
-							|| (!user->isInaccessible()
-								&& !user->isNotificationsUser())) {
-							const auto controller = _controller;
-							const auto starGiftUpgrade = gift->upgrade
-								&& (gift->type == Data::GiftType::StarGift);
-							const auto isGift = gift->slug.isEmpty()
-								|| !gift->channel;
-							const auto out = item->out();
-							const auto outgoingGift = isGift
-								&& (starGiftUpgrade ? !out : out);
-							if (outgoingGift
-								&& gift->type
-									!= Data::GiftType::BirthdaySuggest) {
-								_menu->addAction(
-									tr::lng_context_gift_send(tr::now),
-									[=] {
-										Ui::ShowStarGiftBox(controller, peer);
-									},
-									&st::menuIconGiftPremium);
-							}
-						}
+					} else if (media->gift()) {
+						HistoryView::AddGiftMessageAction(
+							_menu,
+							item,
+							controller);
 					} else if (!rateTranscriptionItem && media->document()) {
 						if ((media->document()->isVoiceMessage()
 								|| media->document()->isVideoMessage())
 							&& Menu::HasRateTranscribeItem(item)) {
 							rateTranscriptionItem = item;
 						}
+					}
+				}
+				if (item->isRegular()
+					&& item->Has<HistoryServiceGramTransfer>()) {
+					if (const auto user = item->history()->peer->asUser()) {
+						Window::AddSendMoneyAction(
+							controller,
+							user,
+							Ui::Menu::CreateAddActionCallback(_menu));
 					}
 				}
 				if (!item->isService() && view && actionText.isEmpty()) {
@@ -4019,7 +4069,9 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			}
 		}
 		if (isUponSelected > 1) {
-			if (selectedState.count > 0 && selectedState.count == selectedState.canForwardCount) {
+			if (!BotUse::Selected(_history)
+				&& selectedState.count > 0
+				&& selectedState.count == selectedState.canForwardCount) {
 				_menu->addAction(tr::lng_context_forward_selected(tr::now), [=] {
 					_widget->forwardSelected();
 				}, &st::menuIconForward);
@@ -4073,7 +4125,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 					? std::make_unique<Ui::PopupMenu>(this, st::popupMenuWithIcons)
 					: nullptr;
 				auto repeatSubmenu = std::make_unique<Ui::PopupMenu>(this, st::popupMenuWithIcons);
-				if (canForward) {
+				if (!BotUse::Selected(_history) && canForward) {
 					if (moreForward) {
 						fwdSubmenu->addAction(tr::lng_context_forward_msg_old(tr::now), [=] {
 							oldForwardAsGroup(itemId);
@@ -4090,7 +4142,10 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						}, &st::menuIconForward);
 					}
 				}
-				if ((item->history()->peer->isMegagroup() || item->history()->peer->isChat() || item->history()->peer->isUser())) {
+				if (!HistoryView::AddBotUseRepeaterAction(_menu, _history, item)
+					&& (item->history()->peer->isMegagroup()
+						|| item->history()->peer->isChat()
+						|| item->history()->peer->isUser())) {
 					if (EnhancedSettings::HasExtraContextMenuOption(EnhancedSettings::ExtraContextMenuOption::Repeater)) {
 						if (canForward) {
 							repeatSubmenu->addAction(tr::lng_context_repeat_msg(tr::now), [=] {
@@ -4172,7 +4227,7 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						}
 					}
 				}
-				if (moreForward && canForward) {
+				if (!BotUse::Selected(_history) && moreForward && canForward) {
 					fwdSubmenu->addAction(tr::lng_forward_to_saved_message(tr::now), [=] {
 						if (item->id <= 0) return;
 						const auto api = &item->history()->peer->session().api();
@@ -4204,9 +4259,10 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 					&& !item->isEmpty()) {
 					HistoryView::AddHideMessageAction(_menu, item);
 				}
-				if (canDelete) {
-					const auto callback = [=] {
-						deleteAsGroup(itemId);
+			if (canDelete) {
+				const auto bot = BotUse::DeleteBot(item);
+				const auto callback = [=] {
+					deleteAsGroup(itemId, bot);
 					};
 					if (item->isUploading()) {
 						if (item->media()
@@ -4906,7 +4962,7 @@ void HistoryInner::recountHistoryGeometry(bool initial) {
 	}
 	const auto aboutAboveHistory = _aboutView && _aboutView->aboveHistory();
 	const auto visibleHeight = _scroll->height();
-	auto oldHistoryMarginTop = qMax(
+	auto oldHistoryMarginTop = std::max(
 		visibleHeight - historyHeight() - _historyMarginBottom,
 		0);
 	if (aboutAboveHistory) {
@@ -4960,19 +5016,19 @@ void HistoryInner::recountHistoryGeometry(bool initial) {
 	if (const auto view = _aboutView ? _aboutView->view() : nullptr) {
 		_aboutView->height = view->resizeGetHeight(_contentWidth);
 		if (aboutAboveHistory) {
-			_aboutView->top = qMin(
+			_aboutView->top = std::min(
 				_historyMarginTop - _aboutView->height,
-				qMax(0, (_scroll->height() - _aboutView->height) / 2));
+				std::max(0, (_scroll->height() - _aboutView->height) / 2));
 		} else {
-			_aboutView->top = qMax(
-				qMax(0, (_scroll->height() - _aboutView->height) / 2),
+			_aboutView->top = std::max(
+				std::max(0, (_scroll->height() - _aboutView->height) / 2),
 				_historyMarginTop + historyHeight() - _historyMarginBottom);
 		}
 	} else if (_aboutView) {
 		_aboutView->top = _aboutView->height = 0;
 	}
 
-	auto newHistoryMarginTop = qMax(
+	auto newHistoryMarginTop = std::max(
 		visibleHeight - historyHeight() - _historyMarginBottom,
 		0);
 	if (aboutAboveHistory) {
@@ -5211,7 +5267,7 @@ void HistoryInner::updateSize() {
 	if (aboutBelowHistory) {
 		accumulate_max(newHistoryMarginBottom, _aboutView->height);
 	}
-	auto newHistoryMarginTop = qMax(
+	auto newHistoryMarginTop = std::max(
 		visibleHeight - itemsHeight - newHistoryMarginBottom,
 		0);
 	if (aboutAboveHistory) {
@@ -5220,12 +5276,12 @@ void HistoryInner::updateSize() {
 
 	if (_aboutView && _aboutView->height > 0) {
 		if (aboutAboveHistory) {
-			_aboutView->top = qMin(
+			_aboutView->top = std::min(
 				newHistoryMarginTop - _aboutView->height,
-				qMax(0, (_scroll->height() - _aboutView->height) / 2));
+				std::max(0, (_scroll->height() - _aboutView->height) / 2));
 		} else {
-			_aboutView->top = qMax(
-				qMax(0, (_scroll->height() - _aboutView->height) / 2),
+			_aboutView->top = std::max(
+				std::max(0, (_scroll->height() - _aboutView->height) / 2),
 				(newHistoryMarginTop
 					+ itemsHeight
 					+ newHistoryMarginBottom
@@ -5685,12 +5741,27 @@ void HistoryInner::elementStartEffect(
 	_emojiInteractions->playEffect(view);
 }
 
+HistoryView::GramReadLine *HistoryInner::elementGramReadLine() {
+	if (!_gramReadLine) {
+		_gramReadLine = std::make_unique<HistoryView::GramReadLine>([=] {
+			update();
+		});
+	}
+	return _gramReadLine.get();
+}
+
 auto HistoryInner::getSelectionState() const
 -> HistoryView::TopBarWidget::SelectedState {
 	auto result = HistoryView::TopBarWidget::SelectedState {};
+	const auto bot = _selected.empty()
+		? 0 : BotUse::DeleteBot(*_selected.begin());
+	const auto allBot = bot && ranges::all_of(_selected, [&](const auto item) {
+		return BotUse::CanDeleteAs(item, bot);
+	});
 	for (const auto &item : _selected) {
 		++result.count;
-		if (item->isEphemeral() || item->canDelete()) {
+		if (item->isEphemeral() || item->canDelete()
+			|| allBot) {
 			++result.canDeleteCount;
 		}
 		if (item->allowsForward()) {
@@ -5958,7 +6029,11 @@ void HistoryInner::mouseActionUpdate() {
 					auto dateLeft = st::msgServiceMargin.left();
 					auto maxwidth = _contentWidth;
 					if (_isChatWide) {
-						maxwidth = qMin(maxwidth, int32(st::msgMaxWidth + 2 * st::msgPhotoSkip + 2 * st::msgMargin.left()));
+						maxwidth = std::min(
+							maxwidth,
+							int32(st::msgMaxWidth
+								+ 2 * st::msgPhotoSkip
+								+ 2 * st::msgMargin.left()));
 					}
 					auto widthForDate = maxwidth - st::msgServiceMargin.left() - st::msgServiceMargin.left();
 
@@ -6007,7 +6082,11 @@ void HistoryInner::mouseActionUpdate() {
 					auto barLeft = st::msgServiceMargin.left();
 					auto maxwidth = _contentWidth;
 					if (_isChatWide) {
-						maxwidth = qMin(maxwidth, int32(st::msgMaxWidth + 2 * st::msgPhotoSkip + 2 * st::msgMargin.left()));
+						maxwidth = std::min(
+							maxwidth,
+							int32(st::msgMaxWidth
+								+ 2 * st::msgPhotoSkip
+								+ 2 * st::msgMargin.left()));
 					}
 					auto widthForBar = maxwidth - st::msgServiceMargin.left() - st::msgServiceMargin.left();
 
@@ -6562,7 +6641,7 @@ void HistoryInner::changeAccessibilitySelection(
 	clearTextSelection();
 	repaintItem(item);
 	_widget->updateTopBarSelection();
-	accessibilityChildStateChanged(index, { .selected = true });
+	accessibilityChildSelectionChanged(index);
 	accessibilityChildNameChanged(index);
 }
 
@@ -6686,19 +6765,22 @@ void HistoryInner::forwardAsGroupNoQuote(FullMsgId itemId) {
 	}
 }
 
-void HistoryInner::deleteItem(FullMsgId itemId) {
+void HistoryInner::deleteItem(FullMsgId itemId, uint64 bot) {
 	if (const auto item = session().data().message(itemId)) {
-		deleteItem(item);
+		deleteItem(item, bot);
 	}
 }
 
-void HistoryInner::deleteItem(not_null<HistoryItem*> item) {
+void HistoryInner::deleteItem(not_null<HistoryItem*> item, uint64 bot) {
+	if (bot && !BotUse::CanDeleteAs(item, bot)) {
+		return;
+	}
 	if (item->isUploading()) {
 		_controller->cancelUploadLayer(item);
 		return;
 	}
 	const auto list = HistoryItemsList{ item };
-	if (CanCreateModerateMessagesBox(list)) {
+	if (!bot && CanCreateModerateMessagesBox(list)) {
 		const auto opt = DefaultModerateMessagesBoxOptions();
 		_controller->show(Box(
 			CreateModerateMessagesBox,
@@ -6706,7 +6788,7 @@ void HistoryInner::deleteItem(not_null<HistoryItem*> item) {
 			nullptr,
 			opt));
 	} else {
-		_controller->show(Box<DeleteMessagesBox>(item));
+		_controller->show(Box<DeleteMessagesBox>(item, bot));
 	}
 }
 
@@ -6715,12 +6797,16 @@ bool HistoryInner::hasPendingResizedItems() const {
 		|| (_migrated && _migrated->hasPendingResizedItems());
 }
 
-void HistoryInner::deleteAsGroup(FullMsgId itemId) {
+void HistoryInner::deleteAsGroup(FullMsgId itemId, uint64 bot) {
 	if (const auto item = session().data().message(itemId)) {
 		const auto group = session().data().groups().find(item);
 		if (!group) {
-			return deleteItem(item);
-		} else if (CanCreateModerateMessagesBox(group->items)) {
+			return deleteItem(item, bot);
+		} else if (bot && !ranges::all_of(group->items, [&](auto part) {
+			return BotUse::CanDeleteAs(part, bot);
+		})) {
+			return;
+		} else if (!bot && CanCreateModerateMessagesBox(group->items)) {
 			_controller->show(Box(
 				CreateModerateMessagesBox,
 				ModerateMessagesBoxEntry{ .items = group->items },
@@ -6729,7 +6815,8 @@ void HistoryInner::deleteAsGroup(FullMsgId itemId) {
 		} else {
 			_controller->show(Box<DeleteMessagesBox>(
 				&session(),
-				session().data().itemsToIds(group->items)));
+				session().data().itemsToIds(group->items),
+				bot));
 		}
 	}
 }
@@ -7137,6 +7224,16 @@ QAccessible::State HistoryInner::accessibilityChildState(int index) const {
 
 QAccessible::Role HistoryInner::accessibilityChildRole() const {
 	return QAccessible::Role::ListItem;
+}
+
+QAccessible::Role HistoryInner::accessibilityChildRoleAt(int index) const {
+	// The unread bar divides the read messages from the unread ones, it
+	// is not a message itself - a separator to a screen reader, which also
+	// keeps it out of the selection and the item count.
+	const auto barIndex = accessibilityUnreadBarIndex();
+	return (barIndex >= 0 && index == barIndex)
+		? QAccessible::Role::Separator
+		: accessibilityChildRole();
 }
 
 QRect HistoryInner::accessibilityChildRect(int index) const {

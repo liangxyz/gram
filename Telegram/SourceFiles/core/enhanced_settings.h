@@ -6,7 +6,6 @@ https://github.com/TDesktop-x64/tdesktop/blob/dev/LEGAL
 */
 #pragma once
 
-#include "base/const_string.h"
 #include "base/flags.h"
 #include "core/link_preview_rules.h"
 #include "rpl/producer.h"
@@ -36,10 +35,9 @@ struct phrase;
 
 namespace EnhancedSettings {
 
-inline constexpr auto kEnhancedSettingsRouteChannel = "yurisettings"_cs;
-
 enum class OptionId {
 	ShowMessagesId,
+	ShowMessageForwardCount,
 	ExtraContextMenuOptions,
 	ShowEmojiButtonAsText,
 	ShowPhoneNumber,
@@ -61,6 +59,7 @@ enum class OptionId {
 	DisablePremiumAnimation,
 	DisableGlobalSearch,
 	ShowMediaMetadata,
+	ShowGifMediaControls,
 	CommunityChatClick,
 	ShowGroupSenderAvatar,
 	ShowGroupSenderOnlineStatus,
@@ -72,7 +71,7 @@ enum class OptionId {
 	HideDeleteForOthersCheckbox,
 	StickerHeight,
 	HideCounter,
-	UseGtApi,
+	TranslateProvider,
 	TranslateToTc,
 	HideStories,
 	ForceMobile,
@@ -84,6 +83,11 @@ enum class OptionId {
 	AllowScreenshots,
 	HideStarRatings,
 	ShowPeerId,
+	PeerIdType,
+	LlmTranslateEndpoint,
+	LlmTranslateModel,
+	LlmTranslateContext,
+	LlmTranslateExtraParameters,
 	DirectForwardWithoutOpeningChat,
 	ForwardRetainSelection,
 	Count,
@@ -98,6 +102,8 @@ struct Key {
 
 namespace Option {
 inline constexpr auto ShowMessagesId = Key<bool>{ OptionId::ShowMessagesId };
+inline constexpr auto ShowMessageForwardCount
+	= Key<bool>{ OptionId::ShowMessageForwardCount };
 inline constexpr auto ExtraContextMenuOptions
 	= Key<QList<int>>{ OptionId::ExtraContextMenuOptions };
 inline constexpr auto ShowEmojiButtonAsText
@@ -134,6 +140,8 @@ inline constexpr auto DisableGlobalSearch
 	= Key<bool>{ OptionId::DisableGlobalSearch };
 inline constexpr auto ShowMediaMetadata
 	= Key<bool>{ OptionId::ShowMediaMetadata };
+inline constexpr auto ShowGifMediaControls
+	= Key<bool>{ OptionId::ShowGifMediaControls };
 inline constexpr auto CommunityChatClick
 	= Key<bool>{ OptionId::CommunityChatClick };
 inline constexpr auto ShowGroupSenderAvatar
@@ -153,7 +161,8 @@ inline constexpr auto HideDeleteForOthersCheckbox
 	= Key<bool>{ OptionId::HideDeleteForOthersCheckbox };
 inline constexpr auto StickerHeight = Key<int>{ OptionId::StickerHeight };
 inline constexpr auto HideCounter = Key<bool>{ OptionId::HideCounter };
-inline constexpr auto UseGtApi = Key<bool>{ OptionId::UseGtApi };
+inline constexpr auto TranslateProvider
+	= Key<QString>{ OptionId::TranslateProvider };
 inline constexpr auto TranslateToTc = Key<bool>{ OptionId::TranslateToTc };
 inline constexpr auto HideStories = Key<bool>{ OptionId::HideStories };
 inline constexpr auto ForceMobile = Key<bool>{ OptionId::ForceMobile };
@@ -171,6 +180,15 @@ inline constexpr auto AllowScreenshots
 inline constexpr auto HideStarRatings
 	= Key<bool>{ OptionId::HideStarRatings };
 inline constexpr auto ShowPeerId = Key<bool>{ OptionId::ShowPeerId };
+inline constexpr auto PeerIdType = Key<int>{ OptionId::PeerIdType };
+inline constexpr auto LlmTranslateEndpoint
+	= Key<QString>{ OptionId::LlmTranslateEndpoint };
+inline constexpr auto LlmTranslateModel
+	= Key<QString>{ OptionId::LlmTranslateModel };
+inline constexpr auto LlmTranslateContext
+	= Key<bool>{ OptionId::LlmTranslateContext };
+inline constexpr auto LlmTranslateExtraParameters
+	= Key<QString>{ OptionId::LlmTranslateExtraParameters };
 inline constexpr auto DirectForwardWithoutOpeningChat
 	= Key<bool>{ OptionId::DirectForwardWithoutOpeningChat };
 inline constexpr auto ForwardRetainSelection
@@ -195,6 +213,11 @@ enum class Normalization {
 	IntegerConstraint,
 	RadioController,
 	LinkPreviewRules,
+};
+
+enum class PeerIdType : int {
+	BotApi,
+	MTProto,
 };
 
 enum class OptionEffect : uint32 {

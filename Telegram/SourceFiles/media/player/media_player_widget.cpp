@@ -10,7 +10,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings.h"
 #include "platform/platform_specific.h"
 #include "data/data_document.h"
-#include "data/data_document_media.h"
 #include "data/data_session.h"
 #include "data/data_peer.h"
 #include "core/application.h"
@@ -28,7 +27,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/format_song_document_name.h"
 #include "lang/lang_keys.h"
 #include "media/audio/media_audio.h"
-#include "media/media_video_frames.h"
 #include "media/view/media_view_playback_progress.h"
 #include "media/player/media_player_button.h"
 #include "media/player/media_player_instance.h"
@@ -45,14 +43,6 @@ namespace Media {
 namespace Player {
 namespace {
 
-[[nodiscard]] QString FormatMediaDimensions(QSize size) {
-	return size.isEmpty()
-		? QString()
-		: (QString::number(size.width())
-			+ u"×"_q
-			+ QString::number(size.height()));
-}
-
 [[nodiscard]] QString FormatAverageBitrate(
 		int64 bytes,
 		crl::time duration) {
@@ -66,77 +56,6 @@ namespace {
 			lt_bitrate,
 			QString::number(bitrate))
 		: QString();
-}
-
-[[nodiscard]] QString DocumentMetadataFlags(
-		not_null<DocumentData*> document) {
-	if (!EnhancedSettings::Get(EnhancedSettings::Option::ShowMediaMetadata)) {
-		return QString();
-	}
-	auto flags = QStringList();
-	if (document->isSilentVideo()) {
-		flags.push_back(tr::lng_media_metadata_silent(tr::now));
-	}
-	if (document->supportsStreaming()) {
-		flags.push_back(tr::lng_media_metadata_streamable(tr::now));
-	}
-	return flags.join(u" · "_q);
-}
-
-[[nodiscard]] auto LocalDocumentVideoInformation(
-		not_null<DocumentData*> document)
--> std::optional<::Media::Video::Information> {
-	const auto media = document->activeMediaView();
-	const auto bytes = media ? media->bytes() : QByteArray();
-	if (!bytes.isEmpty()) {
-		return ::Media::Video::ReadInformation(QString(), bytes);
-	}
-	const auto &location = document->location(true);
-	if (location.isEmpty() || !location.accessEnable()) {
-		return std::nullopt;
-	}
-	const auto guard = gsl::finally([&] { location.accessDisable(); });
-	return ::Media::Video::ReadInformation(location.name());
-}
-
-[[nodiscard]] ::Media::Video::Information DocumentVideoInformation(
-		not_null<DocumentData*> document) {
-	auto result = LocalDocumentVideoInformation(document).value_or(
-		::Media::Video::Information());
-	const auto video = document->video();
-	result.fillMissingFrom({
-		.dimensions = document->dimensions,
-		.duration = document->duration(),
-		.codec = video ? video->codec : QString(),
-	});
-	return result;
-}
-
-[[nodiscard]] QString DocumentMetadataText(
-		not_null<DocumentData*> document) {
-	auto parts = QStringList();
-	const auto information = DocumentVideoInformation(document);
-	const auto dimensions = FormatMediaDimensions(information.dimensions);
-	if (!dimensions.isEmpty()) {
-		parts.push_back(dimensions);
-	}
-	if (!information.codec.isEmpty()) {
-		parts.push_back(information.codec.toUpper());
-	}
-	const auto bitrate = FormatAverageBitrate(
-		document->size,
-		information.duration);
-	if (!bitrate.isEmpty()) {
-		parts.push_back(bitrate);
-	}
-	if (document->size > 0) {
-		parts.push_back(Ui::FormatSizeText(document->size));
-	}
-	const auto metadata = parts.join(u" · "_q);
-	const auto flags = DocumentMetadataFlags(document);
-	return flags.isEmpty()
-		? metadata
-		: (metadata.isEmpty() ? flags : metadata + u" | "_q + flags);
 }
 
 } // namespace
@@ -321,7 +240,18 @@ Widget::Widget(
 	hidePlaylistOn(_close);
 	hidePlaylistOn(_rightControls);
 
+	hideDropdownsOn(_volumeToggle);
+	hideDropdownsOn(_orderToggle);
+	hideDropdownsOn(_speedToggle);
+
+	const auto otherDropdownCheck = [=](QPoint globalPosition) {
+		return overDropdownControl(globalPosition);
+	};
+	_orderController->setOtherDropdownCheck(otherDropdownCheck);
+	_speedController->setOtherDropdownCheck(otherDropdownCheck);
+
 	setType(AudioMsgId::Type::Song);
+	_playPause->finishTransform();
 }
 
 void Widget::hidePlaylistOn(not_null<Ui::RpWidget*> widget) {
@@ -331,6 +261,42 @@ void Widget::hidePlaylistOn(not_null<Ui::RpWidget*> widget) {
 	}) | rpl::on_next([=] {
 		updateOverLabelsState(false);
 	}, widget->lifetime());
+}
+
+void Widget::hideDropdownsOn(not_null<Ui::RpWidget*> widget) {
+	widget->events(
+	) | rpl::filter([=](not_null<QEvent*> e) {
+		return (e->type() == QEvent::Enter);
+	}) | rpl::on_next([=] {
+		hideDropdowns(widget);
+	}, widget->lifetime());
+}
+
+bool Widget::overDropdownControl(QPoint globalPosition) const {
+	const auto over = [&](not_null<Ui::RpWidget*> control) {
+		return !control->isHidden()
+			&& control->rect().contains(
+				control->mapFromGlobal(globalPosition));
+	};
+	return over(_volumeToggle)
+		|| over(_orderToggle)
+		|| over(_speedToggle);
+}
+
+void Widget::hideDropdowns(not_null<Ui::RpWidget*> except) {
+	if (except.get() != _volumeToggle.data()) {
+		_volume->hideFast();
+	}
+	if (except.get() != _orderToggle.data()) {
+		if (const auto menu = _orderController->menu()) {
+			menu->hideFast();
+		}
+	}
+	if (except.get() != _speedToggle.data()) {
+		if (const auto menu = _speedController->menu()) {
+			menu->hideFast();
+		}
+	}
 }
 
 void Widget::setupRightControls() {
@@ -755,11 +721,11 @@ void Widget::handleSongUpdate(const TrackState &state) {
 	if (instance()->isSeeking(_type)) {
 		showPause = true;
 	}
-	_playPause->setIconOverride(state.id.audio()->loading()
-		? &st::mediaPlayerCancelIcon
+	_playPause->setState(state.id.audio()->loading()
+		? PlayButton::State::Cancel
 		: showPause
-		? &st::mediaPlayerPauseIcon
-		: nullptr);
+		? PlayButton::State::Pause
+		: PlayButton::State::Play);
 	_playPause->setAccessibleName(showPause
 		? tr::lng_shortcuts_media_pause(tr::now)
 		: tr::lng_shortcuts_media_play(tr::now));
@@ -782,7 +748,8 @@ void Widget::updateTimeText(const TrackState &state) {
 	_lastDurationMs = (state.length * 1000LL) / frequency;
 
 	if (document->loading()) {
-		_time = QString::number(qRound(document->progress() * 100)) + '%';
+		const auto progress = document->progress() * 100;
+		_time = QString::number(int(base::SafeRound(progress))) + '%';
 		_playbackSlider->setDisabled(true);
 	} else {
 		display = display / frequency;
@@ -832,9 +799,11 @@ void Widget::handleSongChange() {
 			.textWithEntities(true);
 	}
 	if (EnhancedSettings::Get(EnhancedSettings::Option::ShowMediaMetadata)) {
-		const auto metadata = DocumentMetadataText(document);
-		if (!metadata.isEmpty()) {
-			textWithEntities.append(u" · "_q).append(metadata);
+		const auto bitrate = FormatAverageBitrate(
+			document->size,
+			document->duration());
+		if (!bitrate.isEmpty()) {
+			textWithEntities.append(u" · "_q).append(bitrate);
 		}
 	}
 	_nameLabel->setMarkedText(textWithEntities);

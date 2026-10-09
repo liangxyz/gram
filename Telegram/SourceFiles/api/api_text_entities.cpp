@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -41,10 +41,8 @@ using namespace TextUtilities;
 		MTP_long(parsed));
 }
 
-[[nodiscard]] std::optional<MTPMessageEntity> MentionNameEntity(
+[[nodiscard]] std::optional<MTPInputUser> MentionNameUser(
 		not_null<Main::Session*> session,
-		MTPint offset,
-		MTPint length,
 		const QString &data) {
 	const auto parsed = MentionNameDataToFields(data);
 	if (!parsed.userId || parsed.selfId != session->userId().bare) {
@@ -66,7 +64,7 @@ using namespace TextUtilities;
 		: MTP_inputUser(
 			MTP_long(parsed.userId),
 			MTP_long(parsed.accessHash));
-	return MTP_inputMessageEntityMentionName(offset, length, input);
+	return input;
 }
 
 [[nodiscard]] bool IsInternalUrl(const QString &url) {
@@ -232,6 +230,12 @@ EntitiesInText EntitiesFromMTP(
 				d.voffset().v,
 				d.vlength().v,
 			});
+		}, [&](const MTPDmessageEntityTonAddress &d) {
+			result.push_back({
+				EntityType::TonAddress,
+				d.voffset().v,
+				d.vlength().v,
+			});
 		}, [&](const MTPDmessageEntitySpoiler &d) {
 			if (length > 0) {
 				return;
@@ -293,6 +297,16 @@ MTPVector<MTPMessageEntity> EntitiesToMTP(
 		Main::Session *session,
 		const EntitiesInText &entities,
 		ConvertOption option) {
+	return EntitiesToMTP(entities, [=](const QString &data) {
+		Expects(session != nullptr);
+		return MentionNameUser(session, data);
+	}, option);
+}
+
+MTPVector<MTPMessageEntity> EntitiesToMTP(
+		const EntitiesInText &entities,
+		Fn<std::optional<MTPInputUser>(const QString &)> resolveMention,
+		ConvertOption option) {
 	auto v = QVector<MTPMessageEntity>();
 	v.reserve(entities.size());
 	for (const auto &entity : entities) {
@@ -342,6 +356,9 @@ MTPVector<MTPMessageEntity> EntitiesToMTP(
 		case EntityType::BankCard: {
 			v.push_back(MTP_messageEntityBankCard(offset, length));
 		} break;
+		case EntityType::TonAddress: {
+			v.push_back(MTP_messageEntityTonAddress(offset, length));
+		} break;
 		case EntityType::Hashtag: {
 			v.push_back(MTP_messageEntityHashtag(offset, length));
 		} break;
@@ -352,14 +369,11 @@ MTPVector<MTPMessageEntity> EntitiesToMTP(
 			v.push_back(MTP_messageEntityMention(offset, length));
 		} break;
 		case EntityType::MentionName: {
-			Assert(session != nullptr);
-			const auto valid = MentionNameEntity(
-				session,
-				offset,
-				length,
-				entity.data());
-			if (valid) {
-				v.push_back(*valid);
+			if (const auto user = resolveMention(entity.data())) {
+				v.push_back(MTP_inputMessageEntityMentionName(
+					offset,
+					length,
+					*user));
 			}
 		} break;
 		case EntityType::BotCommand: {

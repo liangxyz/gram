@@ -2,8 +2,8 @@
 
 Apply this adapter only when a command explicitly loads it. The shared
 `.agents/skills/` workflow remains authoritative for task selection, artifacts,
-source changes, builds, testing, commits, resumability, and AI publication.
-This file adapts harness mechanics and removes unnecessary text normalization.
+source changes, non-interactive builds, commits, resumability, and AI publication.
+This file adapts host mechanics and removes unnecessary text normalization.
 
 ## Delegation
 
@@ -17,20 +17,24 @@ This file adapts harness mechanics and removes unnecessary text normalization.
   routing, discovered routing, and pending-task consolidation — follow the
   shared workflow's exact helper, commit, and publication contract instead.
   Preserve its single-writer and one-stateful-performer constraints.
-- Every phase leaf and the performer inherit the parent model, as the shared
-  workflow says. Do not pass a model override on the Agent call: its family
-  aliases already resolve to the newest permitted model of that family, so an
-  override can only pin a leaf below the parent. Do not pass a reasoning field
-  either — the Agent tool has none, and effort is inherited unchanged, so every
-  leaf keeps the parent's reasoning level.
+- Classify each assignment with
+  [phase effort](../.agents/shared/phase-effort.md). Where that policy selects
+  `medium` or justified `high`, explicitly pass `model: "opus"` on the Agent
+  call. The `high` choice requires the parent's concrete reason from the
+  inspected scope that the phase contains nothing complex. For `xhigh`, omit
+  `model` to inherit the parent model; this remains the default for non-routine
+  work.
+  Classify the whole assignment: a performer or planner does not become
+  `medium` because part of its work is routine. Do not pass a reasoning field
+  — the Agent tool has none, so actual effort remains inherited. The `opus`
+  pin changes the model, not the reasoning effort.
 - Run every phase leaf as a synchronous foreground Agent call. The call
   returning is the completion signal: validate the required files and
   repository state right there, treating the short reply as notification
   only. Do not use background Agent calls plus shell `sleep`/`until` polling
-  loops for phase leaves — the Codex wait ladder, heartbeat-mtime checks, and
-  five-minute stall windows in the shared references are Codex-only mechanics
-  and do not apply in Claude Code. Leaves still write their progress files
-  (they are cheap resumability evidence), but the performer never polls them.
+  loops for phase leaves. Codex native wait and runtime-status controls do
+  not apply in Claude Code. Leaves owe final artifacts and a compact result,
+  with no heartbeat files or periodic progress reports.
 - A leaf's return value IS its report. Never tell a leaf to send its findings
   back through `SendMessage`, and never wait on one to do so. A leaf has no
   address for its parent: an agent *type* such as `general-purpose` is not a
@@ -67,6 +71,14 @@ This file adapts harness mechanics and removes unnecessary text normalization.
   passes that disagree is this failure, not a reviewer changing its mind:
   re-read it before acting, and never treat the last block as authoritative
   merely because it is last.
+- Verify any cross-task code claim on the current branch before asserting it in
+  a worker's prompt. A task reading `approved` means its AI record is approved
+  on canonical master; it does not mean its commit is on this source checkout's
+  branch, because another checkout may have performed it on its own. Telling a
+  performer that a defect is already fixed, or a symbol already present, when it
+  is not, invites a design built on a fact that is false here — `source-lineage`
+  covers declared `depends_on`, not the informal context a prompt carries.
+  Prefer naming the claim and asking the worker to check it.
 - If the first real leaf Agent is rejected before work begins because nested
   delegation is unavailable, use the shared same-session fallback. Do not
   treat mere presence of the Agent tool as a successful delegation probe.
@@ -75,7 +87,7 @@ This file adapts harness mechanics and removes unnecessary text normalization.
   orchestrating roles — explicitly tell it to read this adapter completely before the
   applicable shared skill or reference. Do NOT tell leaf phase agents to read
   this adapter: their phase prompts are self-contained and already carry the
-  leaf rules (no delegation, no commits, progress and reply contracts); an
+  leaf rules (no delegation, no commits, final-reply contract); an
   adapter read there is wasted context.
 
 ## Model self-reporting
@@ -101,7 +113,7 @@ artifact, rebuild, or summary in Claude Code. In particular:
 
 Let normal Claude editing preserve the checkout's existing text convention.
 This exception removes only explicit line-ending work; it does not relax any
-content validation, owned-path rule, build, review, test, or publication gate.
+content validation, owned-path rule, build, review, or publication gate.
 
 ## Source lineage and branch routing
 
@@ -123,7 +135,7 @@ leaf:
   switch safely in the parent and resume that Agent id when Claude exposes one.
   If it exposes no resumable id, start one replacement performer only after the
   returned worker and repository checks prove there are no phase artifacts,
-  source refs, overlay, or writes. This is a clean setup retry, not a second
+  source refs or writes. This is a clean setup retry, not a second
   concurrent performer.
 - A lineage mismatch first established after Phase 1 stays inside the
   performer: it restores owned/disposable state and publishes the shared
@@ -135,15 +147,6 @@ leaf:
 disposition for requests whose sole work is moving an existing commit between
 branches. Their initial prompts already require this adapter and the applicable
 shared skill, so do not restate or weaken that routing rule in a leaf prompt.
-
-## UI-driver capability
-
-The shared Computer Use reference describes Codex's driver. In Claude Code,
-treat that particular driver as unavailable unless an equivalent UI-driver
-tool is actually exposed in the current session. Preserve the same policy:
-`auto` uses the already planned overlay fallback, while `required` reports the
-exact unverified interaction. Driver availability never permits skipping the
-selected runtime, overlay, account-safety, evidence, or other safety checks.
 
 ## Concurrent routing lane
 
@@ -160,8 +163,9 @@ the invocation while a routing or consolidation is unlanded; after a crash,
 `route-ensure` reports the unpublished commit and `route-publish
 --source-task <id>` with no paths resumes the publication.
 
-A performer that resumes one of its own stalled leaves must never end its turn
-to await that leaf's reply — the reply is delivered to the scheduler, not the
-performer. After resuming a leaf, keep validating its expected artifacts
-in-turn, or relaunch the phase fresh in the foreground; ending the turn while
-any child or command is pending is the stall this rule exists to prevent.
+Resume a stopped phase leaf through a synchronous foreground Agent call and
+validate its artifacts after the call returns. If foreground resumption is
+unavailable, use the bounded fresh-leaf retry only after establishing that the
+original writers stopped. If that cannot be established, report a recoverable
+hard stop. Do not replace foreground waiting with artifact polling or end the
+performer turn with a progress-only reply while a child or command is pending.

@@ -759,15 +759,17 @@ void FileLoadTask::process(ProcessArgs &&args) {
 					Qt::IgnoreAspectRatio,
 					Qt::SmoothTransformation);
 			}
+			const auto gif = _animationAsGif && still->music.empty();
 			auto information = std::make_unique<
 				Ui::PreparedFileInformation>();
 			information->filemime = "video/mp4";
 			information->media = Ui::PreparedFileInformation::Video{
-				.isGifv = _animationAsGif,
+				.isGifv = gif,
 				.supportsStreaming = true,
+				.hasAudio = !still->music.empty(),
 				.duration = still->duration,
 				.thumbnail = std::move(preview),
-				.modifications = { .gif = _animationAsGif },
+				.modifications = { .gif = gif },
 			};
 			_information = std::move(information);
 			_content = QByteArray();
@@ -940,7 +942,7 @@ void FileLoadTask::process(ProcessArgs &&args) {
 			}
 		}
 	}
-	_result->filesize = qMin(filesize, qint64(UINT_MAX));
+	_result->filesize = std::min(filesize, qint64(UINT_MAX));
 
 	if (!filesize || filesize > kFileSizePremiumLimit) {
 		return;
@@ -1275,6 +1277,9 @@ void FileLoadTask::finish() {
 	}
 	const auto premium = session->user()->isPremium();
 	if (!_result || !_result->filesize || _result->filesize < 0) {
+		if (_to.botUseEditDone) {
+			(*_to.botUseEditDone)(false, u"MEDIA_SOURCE_MISSING"_q);
+		}
 		Ui::show(
 			Ui::MakeInformBox((_result && _result->archive)
 				? tr::lng_folder_archive_failed(tr::now)
@@ -1283,6 +1288,9 @@ void FileLoadTask::finish() {
 		removeFromAlbum();
 	} else if (_result->filesize > kFileSizePremiumLimit
 		|| (_result->filesize > kFileSizeLimit && !premium)) {
+		if (_to.botUseEditDone) {
+			(*_to.botUseEditDone)(false, u"FILE_TOO_BIG"_q);
+		}
 		Ui::show(
 			Box(FileSizeLimitBox, session, _result->filesize, nullptr),
 			Ui::LayerOption::KeepOther);

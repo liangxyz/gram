@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_premium.h"
 #include "api/api_text_entities.h"
 #include "api/api_user_names.h"
+#include "bot_use/bot_use_chat_state.h"
 #include "chat_helpers/stickers_lottie.h"
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -27,6 +28,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "export/export_manager.h"
 #include "export/view/export_view_panel_controller.h"
 #include "mtproto/mtproto_config.h"
+#include "wallet/wallet_session.h"
+#include "wallet/wallet_transfer_messages.h"
 #include "window/notifications_manager.h"
 #include "history/history.h"
 #include "history/history_item.h"
@@ -3315,8 +3318,14 @@ void Session::checkMediaDestroys() {
 void Session::registerFormattedDateUpdate(
 		TimeId when,
 		not_null<HistoryView::Element*> view) {
-	_formattedDateUpdates[when].push_back(
-		base::make_weak(view.get()));
+	auto &list = _formattedDateUpdates[when];
+	const auto already = ranges::any_of(list, [&](const auto &weak) {
+		return (weak.get() == view.get());
+	});
+	if (already) {
+		return;
+	}
+	list.push_back(base::make_weak(view.get()));
 	const auto nearest = _formattedDateUpdates.begin()->first;
 	if (nearest < when && _formattedDateTimer.isActive()) {
 		return;
@@ -3611,6 +3620,10 @@ HistoryItem *Session::addNewMessage(
 	if (!peerId || data.type() == mtpc_messageEmpty) {
 		return nullptr;
 	}
+	if (type == NewMessageType::Unread
+		&& session().botUseChats().deferIncoming(data)) {
+		return nullptr;
+	}
 
 	if (type == NewMessageType::Unread
 		&& data.type() == mtpc_message) {
@@ -3618,9 +3631,23 @@ HistoryItem *Session::addNewMessage(
 			if (const auto streamed = h->streamedDraftsIfExists()) {
 				if (const auto adopted = streamed->adoptIncoming(
 						data.c_message())) {
+					fillMessagePeers(peerId, data);
 					CheckForSwitchInlineButton(adopted);
 					return adopted;
 				}
+			}
+		}
+	}
+
+	if (type == NewMessageType::Unread
+		&& data.type() == mtpc_messageService) {
+		if (const auto h = historyLoaded(peerId)) {
+			auto &drafts = _session->wallet().transferMessages();
+			if (const auto adopted = drafts.adopt(
+					h,
+					id,
+					data.c_messageService())) {
+				return adopted;
 			}
 		}
 	}

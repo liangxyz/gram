@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 #include "chat_helpers/compose/compose_features.h"
 #include "chat_helpers/field_characters_count_manager.h"
+#include "chat_helpers/rich_paste_toast.h"
 #include "dialogs/dialogs_key.h"
 #include "history/view/controls/compose_controls_common.h"
 #include "ui/round_rect.h"
@@ -47,6 +48,7 @@ class FieldAutocomplete;
 namespace Data {
 struct MessagePosition;
 struct Draft;
+struct ComposeStash;
 class DraftKey;
 class PhotoMedia;
 class GroupCall;
@@ -70,6 +72,7 @@ class IconButton;
 class RoundButton;
 class EmojiButton;
 class SendAsButton;
+class ChooseBotUseButton;
 class SilentToggle;
 class DropdownMenu;
 struct PreparedBundle;
@@ -114,6 +117,7 @@ class CharactersLimitLabel;
 class ComposeAiButton;
 class ComposeTooltipManager;
 using AiTooltipManager = ComposeTooltipManager;
+class StashHintManager;
 } // namespace HistoryView::Controls
 
 namespace HistoryView {
@@ -278,7 +282,12 @@ public:
 	void showFinished();
 	void raisePanels();
 
-	void editMessage(FullMsgId id, const TextSelection &selection);
+	void editMessage(
+		FullMsgId id,
+		const TextSelection &selection,
+		std::optional<uint64> bot = std::nullopt);
+	[[nodiscard]] uint64 editBotUse() const { return _editBotUse; }
+	[[nodiscard]] FullMsgId editingMessageId() const { return _editingId; }
 	void cancelEditMessage();
 	void maybeCancelEditMessage(); // Confirm if changed and cancel.
 
@@ -324,7 +333,17 @@ public:
 	void applyDraft(
 		FieldHistoryAction fieldHistoryAction = FieldHistoryAction::Clear);
 
+	[[nodiscard]] Data::DraftKey composeStashKey() const;
+	[[nodiscard]] bool canUseComposeStash() const;
+	[[nodiscard]] bool hasStashableContent() const;
+	[[nodiscard]] bool canSendTexts() const;
+	[[nodiscard]] std::unique_ptr<Data::ComposeStash> takeComposeStash();
+	void applyComposeStash(Data::ComposeStash &&stash);
+
 	void saveFieldToHistoryLocalDraft(bool save = true);
+	[[nodiscard]] bool draftNoForwards() const;
+	void toggleDraftNoForwards();
+	void clearDraftNoForwards();
 
 	Fn<void()> restoreTextCallback(const QString &insertTextOnCancel) const;
 
@@ -375,6 +394,7 @@ private:
 	void updateSendLockBadge();
 	void updateMessagesTTLShown();
 	bool updateSendAsButton(std::shared_ptr<Data::GroupCall> videoStream);
+	bool updateBotUseButton();
 	void updateAttachBotsMenu();
 	void updateHeight();
 	void updateWrappingVisibility();
@@ -426,7 +446,9 @@ private:
 	void orderControls();
 	void updateFieldPlaceholder();
 	void updateSilentBroadcast();
-	void editMessage(not_null<HistoryItem*> item);
+	void editMessage(
+		not_null<HistoryItem*> item,
+		std::optional<uint64> bot);
 
 	void escape();
 	void fieldChanged();
@@ -574,6 +596,7 @@ private:
 	const not_null<Ui::EmojiButton*> _tabbedSelectorToggle;
 	rpl::variable<QString> _fieldCustomPlaceholder;
 	QPointer<QWidget> _pasteToastParent;
+	ChatHelpers::RichPasteOfferThrottle _richPasteOfferThrottle;
 	std::shared_ptr<QMimeData> _pendingRichPaste;
 	const not_null<Ui::InputField*> _field;
 	std::unique_ptr<Controls::RichDraftPreview> _richDraftPreview;
@@ -585,6 +608,9 @@ private:
 		bool small = false;
 	} _botMenu;
 	std::unique_ptr<Ui::SendAsButton> _sendAs;
+	std::unique_ptr<Ui::ChooseBotUseButton> _chooseBotUse;
+	uint64 _chooseBotUseId = 0;
+	bool _botUseVideoStream = false;
 	rpl::variable<bool> _videoStreamAdmin;
 	std::unique_ptr<Ui::SilentToggle> _silent;
 	std::unique_ptr<Controls::TTLButton> _ttlInfo;
@@ -609,6 +635,7 @@ private:
 	const std::unique_ptr<Controls::VoiceRecordBar> _voiceRecordBar;
 	std::unique_ptr<Controls::AiTooltipManager> _aiTooltipManager;
 	std::unique_ptr<Controls::AiTooltipManager> _sendAsFileTooltipManager;
+	std::unique_ptr<Controls::StashHintManager> _stashHintManager;
 	std::shared_ptr<Ui::ChatStyle> _chatStyle;
 
 	const Fn<SendMenu::Details()> _sendMenuDetails;
@@ -664,6 +691,7 @@ private:
 	Webrtc::RecordAvailability _recordAvailability = {};
 
 	FullMsgId _editingId;
+	uint64 _editBotUse = 0;
 	std::shared_ptr<Data::PhotoMedia> _photoEditMedia;
 	bool _canReplaceMedia = false;
 	bool _canAddMedia = false;

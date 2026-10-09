@@ -30,7 +30,11 @@ https://github.com/TDesktop-x64/tdesktop/blob/dev/LEGAL
 #include "boxes/connection_box.h"
 #include "boxes/enhanced_options_box.h"
 #include "boxes/link_preview_rules_box.h"
+#include "boxes/llm_translate_config_box.h"
+#include "lang/translate_provider.h"
+#include "lang/translate_llm_settings.h"
 #include "ui/layers/generic_box.h"
+#include "ui/boxes/single_choice_box.h"
 #include "boxes/about_box.h"
 #include "ui/boxes/confirm_box.h"
 #include "platform/platform_specific.h"
@@ -40,6 +44,7 @@ https://github.com/TDesktop-x64/tdesktop/blob/dev/LEGAL
 #include "lang/lang_instance.h"
 #include "core/application.h"
 #include "core/chat_enhanced_settings.h"
+#include "core/deep_links/deep_links_settings.h"
 #include "core/enhanced_settings.h"
 #include "core/update_checker.h"
 #include "storage/localstorage.h"
@@ -122,52 +127,6 @@ struct DecodeEnhancedSettingsResult {
 		bytes.toBase64(QByteArray::Base64UrlEncoding));
 }
 
-[[nodiscard]] not_null<Button*> AddEnhancedOptionRow(
-		not_null<Ui::VerticalLayout*> container,
-		rpl::producer<QString> titleText,
-		rpl::producer<QString> aboutText,
-		const style::SettingsButton &buttonStyle,
-		const style::FlatLabel &titleStyle = st::settingsExperimentalTitle) {
-	const auto &titlePadding = st::settingsExperimentalTitlePadding;
-	const auto &aboutPadding = st::settingsExperimentalAboutPadding;
-	const auto button = Ui::CreateChild<Button>(
-		container.get(),
-		rpl::single(QString()),
-		buttonStyle);
-	const auto title = container->add(
-		object_ptr<Ui::FlatLabel>(
-			container,
-			std::move(titleText),
-			titleStyle),
-		titlePadding);
-	const auto about = container->add(
-		object_ptr<Ui::FlatLabel>(
-			container,
-			std::move(aboutText),
-			st::settingsExperimentalAbout),
-		aboutPadding);
-	title->setAttribute(Qt::WA_TransparentForMouseEvents);
-	about->setAttribute(Qt::WA_TransparentForMouseEvents);
-	rpl::combine(
-		container->widthValue(),
-		title->heightValue(),
-		about->heightValue()
-	) | rpl::on_next([=](int width, int titleHeight, int aboutHeight) {
-		button->resize(width, titlePadding.top()
-			+ titleHeight
-			+ titlePadding.bottom()
-			+ aboutPadding.top()
-			+ aboutHeight
-			+ aboutPadding.bottom());
-	}, button->lifetime());
-	title->topValue(
-	) | rpl::on_next([=](int top) {
-		button->moveToLeft(0, top - titlePadding.top());
-	}, button->lifetime());
-	button->show();
-	return button;
-}
-
 [[nodiscard]] not_null<Ui::VerticalLayout*> AddEnhancedGroup(
 		not_null<Ui::VerticalLayout*> page,
 		rpl::producer<QString> title) {
@@ -193,6 +152,22 @@ struct DecodeEnhancedSettingsResult {
 			.title = tr::lng_settings_show_message_id(tr::now),
 			.keywords = { u"message"_q, u"id"_q, u"info"_q },
 			.deeplink = u"tg://settings/enhanced/show-message-id"_q,
+		};
+	});
+
+	builder.add(nullptr, [] {
+		return Builder::SearchEntry{
+			.id = u"enhanced/show-message-forward-count"_q,
+			.title = tr::lng_settings_show_message_forward_count(tr::now),
+			.keywords = {
+				u"message"_q,
+				u"forward"_q,
+				u"shares"_q,
+				u"count"_q,
+				u"views"_q,
+			},
+			.deeplink
+				= u"tg://settings/enhanced/show-message-forward-count"_q,
 		};
 	});
 
@@ -438,6 +413,21 @@ struct DecodeEnhancedSettingsResult {
 
 	builder.add(nullptr, [] {
 		return Builder::SearchEntry{
+			.id = u"enhanced/show-gif-media-controls"_q,
+			.title = tr::lng_settings_show_gif_media_controls(tr::now),
+			.keywords = {
+				u"gif"_q,
+				u"animation"_q,
+				u"media"_q,
+				u"playback"_q,
+				u"controls"_q,
+			},
+			.deeplink = u"tg://settings/enhanced/show-gif-media-controls"_q,
+		};
+	});
+
+	builder.add(nullptr, [] {
+		return Builder::SearchEntry{
 			.id = u"enhanced/show-group-sender-avatar"_q,
 			.title = tr::lng_settings_show_group_sender_avatar(tr::now),
 			.keywords = { u"group"_q, u"sender"_q, u"avatar"_q },
@@ -463,10 +453,11 @@ struct DecodeEnhancedSettingsResult {
 
 	builder.add(nullptr, [] {
 		return Builder::SearchEntry{
-			.id = u"enhanced/use-gt-api"_q,
-			.title = tr::lng_settings_use_gt_api(tr::now),
-			.keywords = { u"translate"_q, u"google"_q, u"api"_q, u"gt"_q },
-			.deeplink = u"tg://settings/enhanced/use-gt-api"_q,
+			.id = u"enhanced/translation-provider"_q,
+			.title = tr::lng_translate_provider_setting(tr::now),
+			.keywords = { u"translate"_q, u"google"_q, u"crow"_q,
+				u"apple"_q, u"provider"_q },
+			.deeplink = u"tg://settings/enhanced/translation-provider"_q,
 		};
 	});
 
@@ -675,7 +666,7 @@ struct DecodeEnhancedSettingsResult {
 			? st::settingsAttentionButton
 			: st::settingsButtonNoIcon;
 		const auto button = about
-			? AddEnhancedOptionRow(
+			? AddButtonWithAbout(
 				content,
 				(*title)(),
 				std::move(*about),
@@ -797,12 +788,16 @@ struct DecodeEnhancedSettingsResult {
 		addToggleOption(content, EnhancedSettings::Option::ShowMessagesId);
 		addToggleOption(
 			content,
+			EnhancedSettings::Option::ShowMessageForwardCount);
+		addToggleOption(
+			content,
 			EnhancedSettings::Option::ForceShowWebPagePreview);
 		addToggleOption(
 			content,
 			EnhancedSettings::Option::DisableAutoFetchWebPagePreview);
 		addToggleOption(content, EnhancedSettings::Option::RemoveMediaSpoiler);
 		addToggleOption(content, EnhancedSettings::Option::ShowMediaMetadata);
+		addToggleOption(content, EnhancedSettings::Option::ShowGifMediaControls);
 		addToggleOption(content, EnhancedSettings::Option::HideBlockedMessages);
 
 		auto richMessagePreviewBlocksValue = rpl::combine(
@@ -840,7 +835,6 @@ struct DecodeEnhancedSettingsResult {
 			EnhancedSettings::Option::ShowEmojiButtonAsText,
 			tr::lng_show_emoji_button_as_text_desc());
 		addToggleOption(content, EnhancedSettings::Option::ShowScheduledButton);
-		addToggleOption(content, EnhancedSettings::Option::ShowPeerId);
 		addToggleOption(content, EnhancedSettings::Option::HideAllChats);
 		addToggleOption(content, EnhancedSettings::Option::HideCounter);
 		addToggleOption(content, EnhancedSettings::Option::HideStories);
@@ -909,11 +903,80 @@ struct DecodeEnhancedSettingsResult {
 	}
 
 	void Enhanced::setupTranslation(not_null<Ui::VerticalLayout*> content) {
-		addToggleOption(content, EnhancedSettings::Option::UseGtApi);
+		const auto key = EnhancedSettings::Option::TranslateProvider;
+		addLabeledActionOption(
+			content,
+			key.id,
+			EnhancedSettings::Watch(key) | rpl::map([](QString id) {
+				return Ui::TranslateProviderName(id);
+			}),
+			[=] {
+				const auto providers = std::make_shared<
+					std::vector<Ui::TranslateProviderInfo>>(
+						Ui::TranslateProviders());
+				const auto options = std::make_shared<std::vector<QString>>();
+				auto selected = 0;
+				for (auto i = 0; i != int(providers->size()); ++i) {
+					const auto &provider = (*providers)[i];
+					options->push_back(provider.available
+						|| provider.id == u"llm"_q
+						? provider.name
+						: provider.name + u" ("_q
+							+ tr::lng_translate_provider_unavailable_short(tr::now)
+							+ u")"_q);
+					if (provider.id == EnhancedSettings::Get(key)) {
+						selected = i;
+					}
+				}
+				controller()->show(Box([=](not_null<Ui::GenericBox*> box) {
+					SingleChoiceBox(box, {
+						.title = tr::lng_translate_provider_setting(),
+						.options = *options,
+						.initialSelection = selected,
+						.callback = [=](int index) {
+							const auto &chosen = (*providers)[index];
+							if (chosen.selectable) {
+								EnhancedSettings::ApplyOption(
+									controller(), key, chosen.id);
+							} else {
+								controller()->showToast(
+									tr::lng_translate_provider_unavailable(tr::now));
+							}
+						},
+					});
+				}));
+			});
+		const auto configButton = AddButtonWithIcon(
+			content,
+			tr::lng_translate_llm_config(),
+			st::settingsButtonNoIcon);
+		registerHighlight(
+			u"enhanced/llm-translate"_q,
+			std::nullopt,
+			configButton,
+			[=] {
+				return Ui::LLMTranslateShareLink(
+					&controller()->session(),
+					Ui::ReadLLMTranslateConfig());
+			});
+		configButton->addClickHandler([=] {
+			controller()->show(Box([=](not_null<Ui::GenericBox*> box) {
+				Ui::LLMTranslateConfigBox(box);
+			}));
+		});
+		addToggleOption(
+			content,
+			EnhancedSettings::Option::LlmTranslateContext,
+			tr::lng_translate_llm_context_desc());
 
 		const auto langPackBaseId = Lang::GetInstance().baseId();
+		const auto langPackId = Lang::GetInstance().id();
 		if (langPackBaseId == u"zh-hant-raw"_q
-			|| langPackBaseId == u"zh-hans-raw"_q) {
+			|| langPackBaseId == u"zh-hans-raw"_q
+		    || langPackBaseId == u"zh-hant"_q
+			|| langPackBaseId == u"zh-hans"_q
+			|| langPackId == u"zh-hant"_q
+			|| langPackId == u"zh-hans"_q) {
 			addToggleOption(content, EnhancedSettings::Option::TranslateToTc);
 		}
 	}
@@ -951,6 +1014,41 @@ struct DecodeEnhancedSettingsResult {
 	}
 
 	void Enhanced::setupOther(not_null<Ui::VerticalLayout*> content) {
+		addToggleOption(content, EnhancedSettings::Option::ShowPeerId);
+
+		const auto peerIdTypeWrap = content->add(
+			object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+				content,
+				object_ptr<Ui::VerticalLayout>(content)));
+		peerIdTypeWrap->toggleOn(EnhancedSettings::Watch(
+			EnhancedSettings::Option::ShowPeerId));
+		const auto peerIdType = EnhancedSettings::Option::PeerIdType;
+		addLabeledActionOption(
+			peerIdTypeWrap->entity(),
+			peerIdType.id,
+			EnhancedSettings::Watch(peerIdType) | rpl::map([](int value) {
+				return value == int(EnhancedSettings::PeerIdType::MTProto)
+					? u"MTProto"_q
+					: u"Bot API"_q;
+			}),
+			[=] {
+				static const auto options = std::vector<QString>{
+					u"Bot API"_q,
+					u"MTProto"_q,
+				};
+				controller()->show(Box([=](not_null<Ui::GenericBox*> box) {
+					SingleChoiceBox(box, {
+						.title = tr::lng_settings_peer_id_type(),
+						.options = options,
+						.initialSelection = EnhancedSettings::Get(peerIdType),
+						.callback = [=](int index) {
+							EnhancedSettings::ApplyOption(
+								controller(), peerIdType, index);
+						},
+					});
+				}));
+			});
+
 		const auto showServerConfig = AddButtonWithIcon(
 			content,
 			tr::lng_settings_show_server_config(),
@@ -1060,8 +1158,11 @@ struct DecodeEnhancedSettingsResult {
 	void Enhanced::registerHighlight(
 			QString id,
 			std::optional<EnhancedSettings::OptionId> option,
-			not_null<Ui::RpWidget*> widget) {
+			not_null<Ui::RpWidget*> widget,
+			Fn<QString()> shareLink) {
 		_highlightControls.emplace_back(id, widget.get());
+		const auto shared = std::make_shared<Fn<QString()>>(
+			std::move(shareLink));
 
 		const auto prefix = u"enhanced/"_q;
 		Expects(id.startsWith(prefix));
@@ -1070,7 +1171,7 @@ struct DecodeEnhancedSettingsResult {
 			? EnhancedSettings::DeepLink(session, *option)
 			: session->createInternalLinkFull(
 				u"%1/"_q.arg(
-					EnhancedSettings::kEnhancedSettingsRouteChannel.utf16())
+					Core::DeepLinks::kSettingsRouteChannel.utf16())
 					+ id.mid(prefix.size()));
 		const auto menu = widget->lifetime(
 		).make_state<base::unique_qptr<Ui::PopupMenu>>();
@@ -1093,13 +1194,17 @@ struct DecodeEnhancedSettingsResult {
 				tr::lng_auction_menu_copy_link(tr::now),
 				[=] { copy(link); },
 				&st::menuIconCopy);
-			if (option) {
+			const auto sharedLink = (!option && *shared)
+				? (*shared)()
+				: QString();
+			if (option || !sharedLink.isEmpty()) {
 				(*menu)->addAction(
 					tr::lng_settings_share_current_setting(tr::now),
 					[=] {
-						copy(EnhancedSettings::DeepLinkWithCurrentValue(
-							session,
-							*option));
+						copy(option
+							? EnhancedSettings::DeepLinkWithCurrentValue(
+								session, *option)
+							: sharedLink);
 					},
 					&st::menuIconCopy);
 			}

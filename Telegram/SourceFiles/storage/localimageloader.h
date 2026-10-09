@@ -173,6 +173,8 @@ struct FileLoadTo {
 	FullReplyTo replyTo;
 	MsgId replaceMediaOf;
 	Window::SeparateId originWindow = nullptr;
+	uint64 botUse = 0;
+	std::shared_ptr<Fn<void(bool, QString)>> botUseEditDone;
 };
 
 using UploadFileParts = std::vector<QByteArray>;
@@ -192,7 +194,7 @@ struct FilePrepareResult {
 	TaskId taskId = kEmptyTaskId;
 	uint64 id = 0;
 	FileLoadTo to;
-	std::shared_ptr<SendingAlbum> album;
+	std::weak_ptr<SendingAlbum> album;
 	SendMediaType type = SendMediaType::File;
 	QString filepath;
 	QByteArray content;

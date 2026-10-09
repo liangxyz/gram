@@ -276,6 +276,7 @@ public:
 	void setHasUnreadPollVote();
 	[[nodiscard]] bool hasUnwatchedEffect() const;
 	bool markEffectWatched();
+	bool markEmojiInteractionWatched();
 	[[nodiscard]] bool isUnreadMedia() const;
 	[[nodiscard]] bool isIncomingUnreadMedia() const;
 	[[nodiscard]] bool hasUnreadMediaFlag() const;
@@ -354,6 +355,12 @@ public:
 	[[nodiscard]] bool isEphemeral() const {
 		return _flags & MessageFlag::Ephemeral;
 	}
+	[[nodiscard]] bool isFakeHistoryItem() const {
+		return _flags & MessageFlag::FakeHistoryItem;
+	}
+	[[nodiscard]] bool isLegacyMessage() const {
+		return _flags & MessageFlag::Legacy;
+	}
 	[[nodiscard]] bool canBeSelected() const;
 	[[nodiscard]] bool isFakeAboutView() const {
 		return _flags & MessageFlag::FakeAboutView;
@@ -407,6 +414,7 @@ public:
 		const TextWithEntities &textWithEntities,
 		const MTPMessageMedia *media,
 		const MTPRichMessage *richMessage);
+	void applyStreamedDraftFinish(const MTPDmessage &data);
 	void applySentMessage(const MTPDmessage &data);
 	void applySentMessage(
 		const QString &text,
@@ -504,11 +512,19 @@ public:
 	[[nodiscard]] Data::SendError errorTextForForwardIgnoreRights(
 		not_null<Data::Thread*> to) const;
 	[[nodiscard]] const HistoryMessageTranslation *translation() const;
-	[[nodiscard]] bool translationShowRequiresCheck(LanguageId to) const;
-	bool translationShowRequiresRequest(LanguageId to);
-	void translationDone(LanguageId to, TextWithEntities result);
+	[[nodiscard]] bool translationShowRequiresCheck(
+		LanguageId to,
+		const QString &providerId = QString()) const;
+	bool translationShowRequiresRequest(
+		LanguageId to,
+		const QString &providerId = QString());
 	void translationDone(
 		LanguageId to,
+		const QString &providerId,
+		TextWithEntities result);
+	void translationDone(
+		LanguageId to,
+		const QString &providerId,
 		std::shared_ptr<const Iv::RichPage> result);
 
 	[[nodiscard]] bool canReact() const;
@@ -699,9 +715,6 @@ private:
 	void detectTextLinks(const TextWithEntities &textWithEntities);
 	void setTextValue(TextWithEntities text, bool force = false);
 	[[nodiscard]] bool isTooOldForEdit(TimeId now) const;
-	[[nodiscard]] bool isLegacyMessage() const {
-		return _flags & MessageFlag::Legacy;
-	}
 
 	[[nodiscard]] bool checkDiscussionLink(ChannelId id) const;
 	void updateSentContent(
@@ -740,12 +753,16 @@ private:
 	void clearDependencyMessage();
 	void setupChatThemeChange();
 	void setupTTLChange();
+	void setupTonConnectRequest();
+	void armTonConnectRequestExpiry();
+	void updateTonConnectRequestText();
 
 	void translationToggle(
 		not_null<HistoryMessageTranslation*> translation,
 		bool used);
 	void translationDone(
 		LanguageId to,
+		const QString &providerId,
 		TextWithEntities result,
 		std::shared_ptr<const Iv::RichPage> page);
 	void setSelfDestruct(HistorySelfDestructType type, TimeId ttlSeconds);
@@ -786,6 +803,9 @@ private:
 	[[nodiscard]] PreparedServiceText preparePinnedText();
 	[[nodiscard]] PreparedServiceText prepareGameScoreText();
 	[[nodiscard]] PreparedServiceText preparePaymentSentText();
+	[[nodiscard]] PreparedServiceText prepareGramTransferText(
+		bool includeComment = true);
+	[[nodiscard]] PreparedServiceText prepareTonConnectRequestText();
 	[[nodiscard]] PreparedServiceText prepareStoryMentionText();
 	[[nodiscard]] PreparedServiceText prepareInvitedToCallText(
 		const std::vector<not_null<UserData*>> &users,

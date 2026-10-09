@@ -313,6 +313,10 @@ public:
 		Dialogs::Key chat,
 		const QDate &date,
 		Fn<void(not_null<PeerData*>, MsgId)> callback);
+	void resolveJumpToTime(
+		Dialogs::Key chat,
+		TimeId when,
+		Fn<void(not_null<PeerData*>, MsgId)> callback);
 
 	using SliceType = Data::LoadDirection;
 	void requestHistory(
@@ -326,6 +330,11 @@ public:
 		Storage::SharedMediaType type,
 		MsgId messageId,
 		SliceType slice);
+	void requestPinnedMessagesIfNeeded(
+		not_null<PeerData*> peer,
+		MsgId messageId,
+		MsgId topicRootId = 0,
+		PeerId monoforumPeerId = 0);
 	mtpRequestId requestGlobalMedia(
 		Storage::SharedMediaType type,
 		const QString &query,
@@ -383,7 +392,9 @@ public:
 		Ui::PreparedList &&list,
 		SendMediaType type,
 		TextWithTags &&caption,
-		const SendAction &action);
+		const SendAction &action,
+		uint64 botUse = 0,
+		std::shared_ptr<Fn<void(bool, QString)>> botUseEditDone = {});
 
 	void sendUploadedPhoto(
 		FullMsgId localId,
@@ -571,18 +582,18 @@ private:
 	void requestSavedGifs(TimeId now);
 	void readFeaturedSets();
 
-	void resolveJumpToHistoryDate(
+	void resolveJumpToHistoryTime(
 		not_null<PeerData*> peer,
 		MsgId topicRootId,
 		PeerId monoforumPeerId,
-		const QDate &date,
+		TimeId when,
 		Fn<void(not_null<PeerData*>, MsgId)> callback);
 	template <typename Callback>
-	void requestMessageAfterDate(
+	void requestMessageAfterTime(
 		not_null<PeerData*> peer,
 		MsgId topicRootId,
 		PeerId monoforumPeerId,
-		const QDate &date,
+		TimeId when,
 		Callback &&callback);
 
 	void sharedMediaDone(
@@ -707,9 +718,13 @@ private:
 	};
 	base::flat_map<NotifySettingsKey, mtpRequestId> _notifySettingRequests;
 
+	struct DraftSaveState {
+		mtpRequestId requestId = 0;
+		bool changedWhileSaving = false;
+	};
 	base::flat_map<
 		base::weak_ptr<Data::Thread>,
-		mtpRequestId> _draftsSaveRequestIds;
+		DraftSaveState> _draftSaves;
 	base::Timer _draftsSaveTimer;
 
 	base::flat_set<mtpRequestId> _stickerSetDisenableRequests;

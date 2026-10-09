@@ -448,6 +448,7 @@ struct HistoryMessageTranslation
 	TextWithEntities text;
 	std::shared_ptr<const Iv::RichPage> richPage;
 	LanguageId to;
+	QString providerId;
 	bool requested = false;
 	bool failed = false;
 	bool used = false;
@@ -880,6 +881,30 @@ struct HistoryServicePaymentRefund
 	QString transactionId;
 	QString currency;
 	uint64 amount = 0;
+};
+
+struct HistoryServiceGramTransfer
+: RuntimeComponent<HistoryServiceGramTransfer, HistoryItem> {
+	[[nodiscard]] QString commentText() const;
+
+	int64 amount = 0;
+	QString peerAddress;
+	QString transactionId;
+	QString comment;
+	QString failReason;
+	bool commentEncrypted = false;
+};
+
+struct HistoryServiceTonConnectRequest
+: RuntimeComponent<HistoryServiceTonConnectRequest, HistoryItem> {
+	uint64 sessionId = 0;
+	QString topic;
+	QString dappName;
+	TextWithEntities notificationText;
+	rpl::lifetime lifetime;
+	TimeId expires = 0;
+	bool accepted = false;
+	bool declined = false;
 };
 
 enum class HistorySelfDestructType {

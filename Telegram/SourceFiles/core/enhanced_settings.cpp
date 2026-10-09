@@ -10,6 +10,7 @@ https://github.com/TDesktop-x64/tdesktop/blob/dev/LEGAL
 #include "base/parse_helper.h"
 #include "base/qthelp_url.h"
 #include "core/chat_enhanced_settings.h"
+#include "core/deep_links/deep_links_settings.h"
 #include "data/data_histories.h"
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
@@ -84,6 +85,9 @@ const DescriptorList &DescriptorData() {
 		Bool(OptionId::ShowMessagesId, "show_messages_id",
 			&tr::lng_settings_show_message_id,
 			"enhanced/show-message-id", {}, true),
+		Bool(OptionId::ShowMessageForwardCount, "show_message_forward_count",
+			&tr::lng_settings_show_message_forward_count,
+			"enhanced/show-message-forward-count", {}, true),
 		Descriptor{
 			.id = OptionId::ExtraContextMenuOptions,
 			.storageKey = "extra_context_menu_options",
@@ -165,6 +169,9 @@ const DescriptorList &DescriptorData() {
 		Bool(OptionId::ShowMediaMetadata, "show_media_metadata",
 			&tr::lng_settings_show_media_metadata,
 			"enhanced/show-media-metadata"),
+		Bool(OptionId::ShowGifMediaControls, "show_gif_media_controls",
+			&tr::lng_settings_show_gif_media_controls,
+			"enhanced/show-gif-media-controls"),
 		Bool(OptionId::CommunityChatClick, "community_chat_click",
 			&tr::lng_settings_community_chat_click,
 			"enhanced/community-chat-click"),
@@ -215,8 +222,13 @@ const DescriptorList &DescriptorData() {
 		}(),
 		Bool(OptionId::HideCounter, "hide_counter",
 			&tr::lng_settings_hide_counter, "enhanced/hide-counter"),
-		Bool(OptionId::UseGtApi, "use_gt_api",
-			&tr::lng_settings_use_gt_api, "enhanced/use-gt-api"),
+		Descriptor{
+			.id = OptionId::TranslateProvider,
+			.storageKey = "translation_provider",
+			.controlId = "enhanced/translation-provider",
+			.title = &tr::lng_translate_provider_setting,
+			.defaultValue = u"telegram"_q,
+		},
 		Bool(OptionId::TranslateToTc, "translate_to_tc",
 			&tr::lng_settings_translate_to_tc,
 			"enhanced/translate-to-tc"),
@@ -246,6 +258,31 @@ const DescriptorList &DescriptorData() {
 			"enhanced/hide-star-ratings"),
 		Bool(OptionId::ShowPeerId, "show_peer_id",
 			&tr::lng_settings_show_peer_id, "enhanced/show-peer-id"),
+		Integer(OptionId::PeerIdType, "peer_id_type",
+			&tr::lng_settings_peer_id_type, "enhanced/peer-id-type",
+			{ .minimum = int(PeerIdType::BotApi),
+				.maximum = int(PeerIdType::MTProto) }),
+		Descriptor{
+			.id = OptionId::LlmTranslateEndpoint,
+			.storageKey = "llm_translate_endpoint",
+			.title = &tr::lng_translate_llm_endpoint,
+			.defaultValue = QString(),
+		},
+		Descriptor{
+			.id = OptionId::LlmTranslateModel,
+			.storageKey = "llm_translate_model",
+			.title = &tr::lng_translate_llm_model,
+			.defaultValue = QString(),
+		},
+		Bool(OptionId::LlmTranslateContext, "llm_translate_context",
+			&tr::lng_translate_llm_context,
+			"enhanced/llm-translate-context"),
+		Descriptor{
+			.id = OptionId::LlmTranslateExtraParameters,
+			.storageKey = "llm_translate_extra_parameters",
+			.title = &tr::lng_translate_llm_extra_parameters,
+			.defaultValue = QString(),
+		},
 		Bool(OptionId::DirectForwardWithoutOpeningChat,
 			"direct_forward_without_opening_chat",
 			&tr::lng_settings_direct_forward_without_opening_chat,
@@ -813,7 +850,7 @@ QString DeepLink(not_null<Main::Session*> session, OptionId id) {
 	}
 	Expects(controlId.startsWith(prefix));
 	return session->createInternalLinkFull(
-		u"%1/"_q.arg(kEnhancedSettingsRouteChannel.utf16())
+		u"%1/"_q.arg(Core::DeepLinks::kSettingsRouteChannel.utf16())
 			+ controlId.mid(prefix.size()));
 }
 

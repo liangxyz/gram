@@ -2,8 +2,8 @@
 
 Apply this adapter only when a command or shared skill explicitly loads it.
 The shared `.agents/skills/` workflow remains authoritative for task
-selection, artifacts, source changes, builds, testing, commits,
-resumability, and AI publication. This file adapts harness mechanics.
+selection, artifacts, source changes, non-interactive builds, commits,
+resumability, and AI publication. This file adapts host mechanics.
 
 ## Delegation
 
@@ -16,18 +16,18 @@ resumability, and AI publication. This file adapts harness mechanics.
   signal. Validate the required files and repository state right there,
   treating the short reply as notification only.
 - Do not use `background: true` plus `get_command_or_subagent_output`,
-  shell `sleep`/`until` polling, the Codex wait ladder, heartbeat-mtime
-  checks, or five-minute stall windows. Those are Codex-only. Leaves still
-  write their progress files (they are cheap resumability evidence), but
-  the parent never polls them.
+  shell `sleep`/`until` polling, or Codex native wait and runtime-status
+  controls. Leaves owe final artifacts and a compact result, with no heartbeat
+  files or periodic progress reports.
 - There is no `wait_agent`, `list_agents`, `send_message`, `followup_task`,
   `interrupt_agent`, or `spawn_agent`. Do not invent them. Do not launch
   `grok`, `claude`, or `codex` from Bash.
 - Do not use the `workflow` tool to reimplement this pipeline.
 - Do not pass `isolation: worktree`. The shared `workspace.py` helper owns
   every AI and inbox worktree.
-- Omit `model` and any reasoning field so every child inherits this
-  session. Do not invent tool arguments the schema does not expose.
+- The [phase effort](../.agents/shared/phase-effort.md) host fallback applies:
+  omit `model` and any reasoning field so every child inherits this session.
+  Do not invent unsupported arguments or claim prompt text changed effort.
 - Use `subagent_type: "general-purpose"` for inbox, performer, routing,
   consolidation, and phase leaves. Do not restrict `capability_mode`;
   those workers need shell plus writes.
@@ -105,22 +105,8 @@ phase, artifact, rebuild, or summary. In particular:
 
 Let normal Grok editing preserve the checkout's existing text convention.
 This exception removes only explicit line-ending work; it does not relax
-any content validation, owned-path rule, build, review, test, or
+any content validation, owned-path rule, build, review, or
 publication gate.
-
-## UI-driver capability
-
-The shared Computer Use reference describes Codex's driver. In Grok,
-treat that driver as unavailable unless an equivalent UI-driver tool is
-actually exposed in the current session. Preserve the same policy: `auto`
-uses the already planned overlay fallback, while `required` reports the
-exact unverified interaction. Driver availability never permits skipping
-selected runtime, overlay, account-safety, evidence, or other safety checks.
-
-Judge overlay screenshots and supplied mockups by reading the image files
-with `read_file`. Saved PNG/JPG artifacts are visual input. A missing
-desktop driver is not missing evidence when the overlay captured the
-widget or window.
 
 ## Compaction
 

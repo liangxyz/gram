@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_view_top_toast.h"
 #include "history/history.h"
 #include "chat_helpers/field_characters_count_manager.h"
+#include "chat_helpers/rich_paste_toast.h"
 #include "data/data_report.h"
 #include "window/section_widget.h"
 #include "window/window_session_controller.h"
@@ -26,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 enum class SendMediaType;
 class MessageLinksParser;
 struct InlineBotQuery;
+class SendFilesBox;
 
 namespace MTP {
 class Error;
@@ -36,6 +38,7 @@ class ForumTopic;
 class PhotoMedia;
 struct DrawToReplyRequest;
 struct SendError;
+struct ComposeStash;
 } // namespace Data
 
 namespace SendMenu {
@@ -83,6 +86,7 @@ struct PreparedList;
 struct PreparedBundle;
 class SendFilesWay;
 class SendAsButton;
+class ChooseBotUseButton;
 class SpoilerAnimation;
 class ChooseThemeController;
 class ElasticScroll;
@@ -137,6 +141,8 @@ class PhotoEditSpoilerManager;
 class ComposeAiButton;
 class ComposeTooltipManager;
 class RichDraftPreview;
+class StashManager;
+class StashHintManager;
 using AiTooltipManager = ComposeTooltipManager;
 struct VoiceToSend;
 } // namespace HistoryView::Controls
@@ -235,7 +241,8 @@ public:
 		FullReplyTo fields = {});
 	void editMessage(
 		not_null<HistoryItem*> item,
-		const TextSelection &selection);
+		const TextSelection &selection,
+		std::optional<uint64> bot = std::nullopt);
 
 	void fillSenderUserpicMenu(
 		not_null<Ui::PopupMenu*> menu,
@@ -440,6 +447,9 @@ private:
 	void showMembersDropdown();
 	void windowIsVisibleChanged();
 	void saveFieldToHistoryLocalDraft();
+	[[nodiscard]] bool draftNoForwards() const;
+	void toggleDraftNoForwards() const;
+	void clearDraftNoForwards();
 	void fileChosen(ChatHelpers::FileChosen &&data);
 	void setupSendMenu(
 		not_null<Ui::RpWidget*> button,
@@ -637,6 +647,11 @@ private:
 	}
 
 	void setupShortcuts();
+	void setupComposeStash();
+	[[nodiscard]] bool canUseComposeStash() const;
+	[[nodiscard]] bool hasStashableContent() const;
+	[[nodiscard]] std::unique_ptr<Data::ComposeStash> takeComposeStash();
+	void applyComposeStash(Data::ComposeStash &&stash);
 	void setupGiftToChannelButton();
 	void setupDirectMessageButton();
 
@@ -650,6 +665,7 @@ private:
 	void setupPinnedTracker();
 	void checkPinnedBarState();
 	void clearHidingPinnedBar();
+	[[nodiscard]] Ui::PinnedBar *visiblePinnedBar() const;
 	void refreshPinnedBarButton(bool many, HistoryItem *item);
 	void checkLastPinnedClickedIdReset(
 		int wasScrollTop,
@@ -797,6 +813,8 @@ private:
 		HistoryView::SuggestMode mode);
 	void setupSendAsToggle();
 	void refreshSendAsToggle();
+	void setupBotUseToggle();
+	void refreshBotUseToggle();
 	void refreshAttachBotsMenu();
 
 	void injectSponsoredMessages() const;
@@ -820,6 +838,7 @@ private:
 
 	std::shared_ptr<QMimeData> _pendingRichPaste;
 	MsgId _editMsgId = 0;
+	uint64 _editBotUse = 0;
 	std::shared_ptr<Data::PhotoMedia> _photoEditMedia;
 	bool _canReplaceMedia = false;
 	bool _canAddMedia = false;
@@ -860,6 +879,7 @@ private:
 	bool _sentFromScheduledTip = false;
 
 	mtpRequestId _saveEditMsgRequestId = 0;
+	uint64 _saveEditBotOperation = 0;
 
 	std::unique_ptr<HistoryView::Controls::WebpageProcessor> _preview;
 	Fn<bool(QPainter &p, QRect to)> _previewDrawPreview;
@@ -951,6 +971,8 @@ private:
 	object_ptr<Ui::IconButton> _attachToggle;
 	object_ptr<Ui::IconButton> _replaceMedia = { nullptr };
 	object_ptr<Ui::SendAsButton> _sendAs = { nullptr };
+	object_ptr<Ui::ChooseBotUseButton> _chooseBotUse = { nullptr };
+	uint64 _chooseBotUseId = 0;
 	object_ptr<Ui::EmojiButton> _tabbedSelectorToggle;
 	object_ptr<Ui::IconButton> _botKeyboardShow;
 	object_ptr<Ui::IconButton> _botKeyboardHide;
@@ -969,6 +991,7 @@ private:
 	rpl::lifetime _subsectionTopicsLifetime;
 	std::unique_ptr<HistoryView::Controls::AiTooltipManager> _aiTooltipManager;
 	std::unique_ptr<HistoryView::Controls::AiTooltipManager> _sendAsFileTooltipManager;
+	std::unique_ptr<HistoryView::Controls::StashHintManager> _stashHintManager;
 	std::shared_ptr<Ui::ChatStyle> _fieldChatStyle;
 	bool _cmdStartShown = false;
 	object_ptr<Ui::InputField> _field;
@@ -999,6 +1022,8 @@ private:
 	object_ptr<InlineBots::Layout::Widget> _inlineResults = { nullptr };
 	std::unique_ptr<TabbedPanel> _tabbedPanel;
 	std::unique_ptr<Ui::DropdownMenu> _attachBotsMenu;
+	std::unique_ptr<HistoryView::Controls::StashManager> _stash;
+	QPointer<SendFilesBox> _sendFilesBox;
 
 	DragArea::Areas _attachDragAreas;
 
@@ -1036,6 +1061,7 @@ private:
 	bool _sponsoredMessagesStateKnown = false;
 	bool _justMarkingAsRead = false;
 	bool _lastSendActionFromThisWindow = false;
+	ChatHelpers::RichPasteOfferThrottle _richPasteOfferThrottle;
 
 	object_ptr<Ui::PlainShadow> _topShadow;
 	bool _inGrab = false;

@@ -31,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/notify/data_notify_settings.h"
 #include "data/stickers/data_stickers.h"
 #include "data/data_cloud_themes.h"
+#include "data/data_compose_stash.h"
 #include "data/data_drafts.h"
 #include "data/data_saved_messages.h"
 #include "data/data_saved_sublist.h"
@@ -142,6 +143,7 @@ using UpdateFlag = Data::HistoryUpdate::Flag;
 		from.webpage);
 	result->richMessage = from.richMessage;
 	result->richMessageSummary = from.richMessageSummary;
+	result->noForwards = from.noForwards;
 	return result;
 }
 
@@ -160,6 +162,7 @@ void CopyDraftForThread(
 	to->webpage = from.webpage;
 	to->richMessage = from.richMessage;
 	to->richMessageSummary = from.richMessageSummary;
+	to->noForwards = from.noForwards;
 }
 
 } // namespace
@@ -405,7 +408,7 @@ Data::Draft *History::createCloudDraft(
 		PeerId monoforumPeerId,
 		const Data::Draft *fromDraft) {
 	if (Data::DraftIsNull(fromDraft)) {
-		setCloudDraft(std::make_unique<Data::Draft>(
+		auto draft = std::make_unique<Data::Draft>(
 			TextWithTags(),
 			FullReplyTo{
 				.topicRootId = topicRootId,
@@ -413,7 +416,9 @@ Data::Draft *History::createCloudDraft(
 			},
 			SuggestOptions(),
 			MessageCursor(),
-			Data::WebPageDraft()));
+			Data::WebPageDraft());
+		draft->noForwards = fromDraft && fromDraft->noForwards;
+		setCloudDraft(std::move(draft));
 		cloudDraft(topicRootId, monoforumPeerId)->date = TimeId(0);
 	} else {
 		auto existing = cloudDraft(topicRootId, monoforumPeerId);
@@ -577,6 +582,40 @@ void History::setForwardDraft(
 				Data::EntryUpdate::Flag::ForwardDraft);
 		}
 	}
+}
+
+Data::ComposeStash *History::composeStash(Data::DraftKey key) const {
+	const auto i = _composeStashes.find(key);
+	return (i != end(_composeStashes)) ? i->second.get() : nullptr;
+}
+
+void History::setComposeStash(
+		Data::DraftKey key,
+		std::unique_ptr<Data::ComposeStash> stash) {
+	if (!key) {
+		return;
+	} else if (stash) {
+		_composeStashes[key] = std::move(stash);
+	} else if (!_composeStashes.remove(key)) {
+		return;
+	}
+	session().changes().historyUpdated(
+		this,
+		Data::HistoryUpdate::Flag::ComposeStash);
+}
+
+std::unique_ptr<Data::ComposeStash> History::takeComposeStash(
+		Data::DraftKey key) {
+	const auto i = _composeStashes.find(key);
+	if (i == end(_composeStashes)) {
+		return nullptr;
+	}
+	auto result = std::move(i->second);
+	_composeStashes.erase(i);
+	session().changes().historyUpdated(
+		this,
+		Data::HistoryUpdate::Flag::ComposeStash);
+	return result;
 }
 
 not_null<HistoryItem*> History::createItem(
@@ -1334,53 +1373,7 @@ not_null<HistoryItem*> History::addNewToBack(
 			}
 		}
 	}
-	if (item->definesReplyKeyboard()) {
-		const auto markupFlags = item->replyKeyboardFlags();
-		if (!(markupFlags & ReplyMarkupFlag::Selective)
-			|| item->mentionsMe()) {
-			const auto markupSenders = [&]() -> base::flat_set<not_null<PeerData*>>* {
-				if (const auto chat = peer->asChat()) {
-					return &chat->markupSenders;
-				} else if (const auto channel = peer->asMegagroup()) {
-					return &channel->mgInfo->markupSenders;
-				}
-				return nullptr;
-			}();
-			if (markupSenders) {
-				markupSenders->insert(from);
-			}
-			if (markupFlags & ReplyMarkupFlag::None) {
-				// None markup means replyKeyboardHide.
-				if (lastKeyboardFrom == from->id
-					|| (!lastKeyboardInited
-						&& !peer->isChat()
-						&& !peer->isMegagroup()
-						&& !item->out())) {
-					clearLastKeyboard();
-				}
-			} else {
-				bool botNotInChat = false;
-				if (peer->isChat()) {
-					botNotInChat = from->isUser()
-						&& (!peer->asChat()->participants.empty()
-							|| !Data::CanSendAnything(peer))
-						&& !peer->asChat()->participants.contains(
-							from->asUser());
-				} else if (peer->isMegagroup()) {
-					botNotInChat = from->isUser()
-						&& (peer->asChannel()->mgInfo->botStatus != Data::BotStatus::Unknown
-							|| !Data::CanSendAnything(peer))
-						&& !peer->asChannel()->mgInfo->bots.contains(
-							from->asUser());
-				}
-				if (botNotInChat) {
-					clearLastKeyboard();
-				} else {
-					setLastKeyboard(item->id, from->id);
-				}
-			}
-		}
-	}
+	applyReplyKeyboard(item);
 
 	setLastMessage(item);
 	if (unread) {
@@ -1392,6 +1385,58 @@ not_null<HistoryItem*> History::addNewToBack(
 
 	owner().notifyHistoryChangeDelayed(this);
 	return item;
+}
+
+void History::applyReplyKeyboard(not_null<HistoryItem*> item) {
+	if (!item->definesReplyKeyboard()) {
+		return;
+	}
+	const auto markupFlags = item->replyKeyboardFlags();
+	if ((markupFlags & ReplyMarkupFlag::Selective) && !item->mentionsMe()) {
+		return;
+	}
+	const auto from = item->from();
+	const auto markupSenders = [&]() -> base::flat_set<not_null<PeerData*>>* {
+		if (const auto chat = peer->asChat()) {
+			return &chat->markupSenders;
+		} else if (const auto channel = peer->asMegagroup()) {
+			return &channel->mgInfo->markupSenders;
+		}
+		return nullptr;
+	}();
+	if (markupSenders) {
+		markupSenders->insert(from);
+	}
+	if (markupFlags & ReplyMarkupFlag::None) {
+		// None markup means replyKeyboardHide.
+		if (lastKeyboardFrom == from->id
+			|| (!lastKeyboardInited
+				&& !peer->isChat()
+				&& !peer->isMegagroup()
+				&& !item->out())) {
+			clearLastKeyboard();
+		}
+	} else {
+		bool botNotInChat = false;
+		if (peer->isChat()) {
+			botNotInChat = from->isUser()
+				&& (!peer->asChat()->participants.empty()
+					|| !Data::CanSendAnything(peer))
+				&& !peer->asChat()->participants.contains(
+					from->asUser());
+		} else if (peer->isMegagroup()) {
+			botNotInChat = from->isUser()
+				&& (peer->asChannel()->mgInfo->botStatus != Data::BotStatus::Unknown
+					|| !Data::CanSendAnything(peer))
+				&& !peer->asChannel()->mgInfo->bots.contains(
+					from->asUser());
+		}
+		if (botNotInChat) {
+			clearLastKeyboard();
+		} else {
+			setLastKeyboard(item->id, from->id);
+		}
+	}
 }
 
 void History::applyMessageChanges(
@@ -1548,36 +1593,22 @@ void History::applyServiceChanges(
 		if (replyTo) {
 			replyTo->match([&](const MTPDmessageReplyHeader &data) {
 				const auto id = data.vreply_to_msg_id().value_or_empty();
-				if (id && item) {
-					session().storage().add(Storage::SharedMediaAddSlice(
-						peer->id,
-						MsgId(0), // topicRootId
-						PeerId(0), // monoforumPeerId
-						Storage::SharedMediaType::Pinned,
-						{ id },
-						{ id, ServerMaxMsgId }));
-					setHasPinnedMessages(true);
-					if (const auto topic = item->topic()) {
-						session().storage().add(Storage::SharedMediaAddSlice(
-							peer->id,
-							topic->rootId(),
-							PeerId(), // monoforumPeerId
-							Storage::SharedMediaType::Pinned,
-							{ id },
-							{ id, ServerMaxMsgId }));
-						topic->setHasPinnedMessages(true);
+				const auto topicRootId = [&] {
+					if (!peer->forum()) {
+						return MsgId(0);
+					} else if (const auto top = data.vreply_to_top_id()) {
+						return MsgId(top->v);
+					} else if (!data.is_forum_topic()) {
+						return MsgId(Data::ForumTopic::kGeneralId);
 					}
-					if (const auto sublist = item->savedSublist()) {
-						session().storage().add(Storage::SharedMediaAddSlice(
-							peer->id,
-							MsgId(), // topicRootId
-							item->sublistPeerId(),
-							Storage::SharedMediaType::Pinned,
-							{ id },
-							{ id, ServerMaxMsgId }));
-						sublist->setHasPinnedMessages(true);
-					}
-				}
+					return MsgId(0);
+				}();
+				const auto monoforumPeerId = item->sublistPeerId();
+				Data::ApplyPinnedMessageId(
+					peer,
+					id,
+					topicRootId,
+					monoforumPeerId);
 			}, [&](const MTPDmessageReplyStoryHeader &data) {
 				LOG(("API Error: story reply in messageActionPinMessage."));
 			});
@@ -1817,6 +1848,9 @@ void History::mainViewRemoved(
 }
 
 void History::newItemAdded(not_null<HistoryItem*> item, NewAddType type) {
+	if (type == NewAddType::StreamedDraftFinish) {
+		applyStreamedDraftFinish(item);
+	}
 	item->indexAsNewItem();
 	item->addToMessagesIndex();
 	if (const auto from = item->from() ? item->from()->asUser() : nullptr) {
@@ -1827,19 +1861,20 @@ void History::newItemAdded(not_null<HistoryItem*> item, NewAddType type) {
 		from->madeAction(item->date());
 	}
 	item->contributeToSlowmode();
+	const auto pendingIncoming = item->isSending() && !item->out();
 	auto notification = Data::ItemNotification{
 		.item = item,
 		.type = Data::ItemNotificationType::Message,
 	};
-	if (item->showNotification()) {
+	if (!pendingIncoming && item->showNotification()) {
 		item->notificationThread()->pushNotification(notification);
 	}
 	owner().notifyNewItemAdded(item);
-	const auto stillShow = item->showNotification(); // Could be read already.
+	const auto stillShow = !pendingIncoming && item->showNotification(); // Could be read already.
 	if (stillShow) {
 		Core::App().notifications().schedule(notification);
 	}
-	if (item->out()) {
+	if (!pendingIncoming && item->out()) {
 		if (item->isFromScheduled() && unreadCountRefreshNeeded(item->id)) {
 			if (unreadCountKnown()) {
 				setUnreadCount(unreadCount() + 1);
@@ -1855,7 +1890,7 @@ void History::newItemAdded(not_null<HistoryItem*> item, NewAddType type) {
 		if (item->changesWallPaper()) {
 			peer->updateFullForced();
 		}
-	} else {
+	} else if (!pendingIncoming) {
 		if (item->unread(this)) {
 			if (unreadCountKnown()) {
 				setUnreadCount(unreadCount() + 1);
@@ -1893,6 +1928,44 @@ void History::newItemAdded(not_null<HistoryItem*> item, NewAddType type) {
 			&& media->diceGameOutcome().stakeNanoTon > 0) {
 			session().credits().tonLoad(true);
 		}
+	}
+}
+
+void History::applyStreamedDraftFinish(not_null<HistoryItem*> item) {
+	session().changes().messageUpdated(
+		item,
+		Data::MessageUpdate::Flag::NewAdded);
+	if (const auto bot = GuestChatBotForCurrentUser(item)) {
+		session().topGuestChatBots().increment(bot, item->date());
+	}
+	applyReplyKeyboard(item);
+	if (lastMessage() == item) {
+		_lastServerMessage = item;
+	} else {
+		setLastMessage(item);
+	}
+	const auto dateChanged = [&](Dialogs::Entry *entry) {
+		if (!entry
+			|| entry->chatListMessage() != item
+			|| entry->chatListTimeId() == item->date()) {
+			return false;
+		}
+		entry->setChatListTimeId(item->date());
+		return true;
+	};
+	if (dateChanged(this)) {
+		if (const auto folder = this->folder()) {
+			folder->oneListMessageChanged(item, item);
+		}
+		if (isLinkedCommunityMember()) {
+			_communityInfo->oneListMessageChanged();
+		}
+	}
+	if (const auto topic = item->topic(); dateChanged(topic)) {
+		topic->forum()->listMessageChanged(item, item);
+	}
+	if (const auto sublist = item->savedSublist(); dateChanged(sublist)) {
+		sublist->parent()->listMessageChanged(item, item);
 	}
 }
 
@@ -2631,7 +2704,7 @@ void History::setFolderPointer(Data::Folder *folder) {
 	const auto wasKnown = folderKnown();
 	const auto wasInList = inChatList();
 	if (wasInList) {
-		removeFromChatList(0, owner().chatsList(this->folder()));
+		removeFromChatList(0, owner().chatsListFor(this));
 	}
 	const auto was = _folder.value_or(nullptr);
 	_folder = folder;
@@ -2639,7 +2712,7 @@ void History::setFolderPointer(Data::Folder *folder) {
 		was->unregisterOne(this);
 	}
 	if (wasInList) {
-		addToChatList(0, owner().chatsList(folder));
+		addToChatList(0, owner().chatsListFor(this));
 
 		owner().chatsFilters().refreshHistory(this);
 		updateChatListEntry();
@@ -4418,6 +4491,12 @@ void History::reactionsEnabledChanged(bool enabled) {
 		for (const auto &item : _items) {
 			item->updateReactionsUnknown();
 		}
+	}
+}
+
+void History::refreshReactionIdentity() {
+	for (const auto &item : _items) {
+		owner().notifyItemDataChange(item.get());
 	}
 }
 

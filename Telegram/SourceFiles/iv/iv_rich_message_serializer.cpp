@@ -55,7 +55,8 @@ constexpr auto kNoEntityIndex = -1;
 }
 
 struct SerializeContext {
-	not_null<Main::Session*> session;
+	Main::Session *session = nullptr;
+	const RichMessageResources *resources = nullptr;
 	bool skipUnuploadedMedia = false;
 	base::flat_map<uint64, MTPInputPhoto> photos;
 	base::flat_map<uint64, MTPInputDocument> documents;
@@ -163,6 +164,7 @@ struct SerializeBlockResult {
 	case EntityType::Email: return 18;
 	case EntityType::Phone: return 19;
 	case EntityType::BankCard: return 20;
+	case EntityType::TonAddress: return 21;
 	case EntityType::Invalid:
 	case EntityType::Semibold:
 	case EntityType::MediaTimestamp:
@@ -236,6 +238,9 @@ struct SerializeBlockResult {
 		SerializeContext *context,
 		uint64 id,
 		PhotoData *photo) {
+	if (context->resources) {
+		return context->resources->photo(id);
+	}
 	const auto resolved = ResolvePhotoData(context, id, photo);
 	if (!resolved) {
 		return std::nullopt;
@@ -253,6 +258,9 @@ struct SerializeBlockResult {
 		SerializeContext *context,
 		uint64 id,
 		DocumentData *document) {
+	if (context->resources) {
+		return context->resources->document(id);
+	}
 	const auto resolved = ResolveDocumentData(context, id, document);
 	if (!resolved) {
 		return std::nullopt;
@@ -296,6 +304,12 @@ bool CollectUser(SerializeContext *context, uint64 userId) {
 		return false;
 	} else if (context->users.contains(userId)) {
 		return true;
+	} else if (context->resources) {
+		if (const auto input = context->resources->user(userId)) {
+			context->users.emplace(userId, *input);
+			return true;
+		}
+		return false;
 	} else if (userId == context->session->userId().bare) {
 		context->users.emplace(userId, MTP_inputUserSelf());
 		return true;
@@ -319,6 +333,10 @@ bool CollectUser(SerializeContext *context, uint64 userId) {
 [[nodiscard]] std::optional<uint64> CollectMentionUser(
 		SerializeContext *context,
 		const QString &data) {
+	if (context->resources) {
+		const auto id = context->resources->mentionUser(data);
+		return (id && CollectUser(context, *id)) ? id : std::nullopt;
+	}
 	const auto fields = TextUtilities::MentionNameDataToFields(data);
 	if (!fields.userId || fields.selfId != context->session->userId().bare) {
 		return std::nullopt;
@@ -471,6 +489,7 @@ bool CollectUser(SerializeContext *context, uint64 userId) {
 	case EntityType::Email:
 	case EntityType::Phone:
 	case EntityType::BankCard:
+	case EntityType::TonAddress:
 		return *inner;
 	case EntityType::CustomUrl: {
 		const auto data = entity.data();
@@ -1639,11 +1658,13 @@ void TrimEmptyParagraphEdges(std::vector<Block> *blocks) {
 		if (!documentId || !caption) {
 			return FailedSerializeBlock();
 		}
-		const auto document = ResolveDocumentData(
-			context,
-			block.documentId,
-			block.document);
-		return SuccessfulSerializeBlock(RichDocumentIsAudio(document)
+		const auto audio = context->resources
+			? context->resources->documentIsAudio(block.documentId)
+			: RichDocumentIsAudio(ResolveDocumentData(
+				context,
+				block.documentId,
+				block.document));
+		return SuccessfulSerializeBlock(audio
 			? MTP_pageBlockAudio(MTP_long(*documentId), *caption)
 			: MTP_pageBlockDocument(MTP_long(*documentId), *caption));
 	}
@@ -1854,13 +1875,10 @@ void TrimEmptyParagraphEdges(std::vector<Block> *blocks) {
 	return result;
 }
 
-} // namespace
-
-SerializeInputRichMessageResult SerializeInputRichMessage(
-		not_null<Main::Session*> session,
+SerializeInputRichMessageResult SerializeWithContext(
+		SerializeContext context,
 		const RichPage &page,
 		SerializeInputRichMessageMode mode) {
-	auto context = SerializeContext{ session };
 	context.skipUnuploadedMedia
 		= (mode == SerializeInputRichMessageMode::Draft);
 	auto normalizedBlocks = FinalSubmitNormalizedBlocks();
@@ -1915,6 +1933,22 @@ SerializeInputRichMessageResult SerializeInputRichMessage(
 		MTP_vector<MTPInputPhoto>(std::move(photos)),
 		MTP_vector<MTPInputDocument>(std::move(documents)),
 		MTP_vector<MTPInputUser>(std::move(users))));
+}
+
+} // namespace
+
+SerializeInputRichMessageResult SerializeInputRichMessage(
+		not_null<Main::Session*> session,
+		const RichPage &page,
+		SerializeInputRichMessageMode mode) {
+	return SerializeWithContext({ .session = session }, page, mode);
+}
+
+SerializeInputRichMessageResult SerializeInputRichMessage(
+		const RichMessageResources &resources,
+		const RichPage &page,
+		SerializeInputRichMessageMode mode) {
+	return SerializeWithContext({ .resources = &resources }, page, mode);
 }
 
 } // namespace Iv

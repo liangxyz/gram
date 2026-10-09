@@ -42,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/notify/data_notify_settings.h"
 #include "data/data_birthday.h"
 #include "data/data_changes.h"
+#include "data/data_compose_stash.h"
 #include "data/data_drafts.h"
 #include "data/data_group_call.h"
 #include "data/data_messages.h"
@@ -83,6 +84,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/controls/history_view_compose_ai_button.h"
 #include "history/view/controls/history_view_compose_ai_tooltip.h"
 #include "history/view/controls/history_view_compose_media_edit_manager.h"
+#include "history/view/controls/history_view_compose_stash_hint.h"
 #include "history/view/controls/history_view_forward_panel.h"
 #include "history/view/controls/history_view_rich_draft_preview.h"
 #include "history/view/controls/history_view_draft_options.h"
@@ -125,8 +127,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/controls/emoji_button.h"
 #include "ui/controls/send_button.h"
 #include "ui/controls/send_as_button.h"
+#include "ui/controls/choose_bot_use_button.h"
 #include "ui/controls/silent_toggle.h"
 #include "ui/chat/choose_send_as.h"
+#include "ui/chat/choose_bot_use.h"
+#include "bot_use/bot_use_chat_state.h"
+#include "bot_use/bot_use_sending.h"
 #include "ui/effects/spoiler_mess.h"
 #include "ui/effects/reaction_fly_animation.h"
 #include "webrtc/webrtc_environment.h"
@@ -155,6 +161,7 @@ constexpr auto kFullDayInMs = 86400 * 1000;
 constexpr auto kMouseEvents = {
 	QEvent::MouseMove,
 	QEvent::MouseButtonPress,
+	QEvent::MouseButtonDblClick,
 	QEvent::MouseButtonRelease
 };
 constexpr auto kRefreshSlowmodeLabelTimeout = crl::time(200);
@@ -545,7 +552,8 @@ void FieldHeader::init() {
 			return;
 		}
 		const auto isLeftButton = (e->button() == Qt::LeftButton);
-		if (type == QEvent::MouseButtonPress) {
+		if (type == QEvent::MouseButtonPress
+			|| type == QEvent::MouseButtonDblClick) {
 			if (isLeftButton && inPhotoEdit) {
 				_editPhotoRequests.fire({});
 			} else if (isLeftButton && inPreviewRect) {
@@ -1542,12 +1550,29 @@ void ComposeControls::setHistory(SetHistoryArgs &&args) {
 	updateAttachBotsMenu();
 
 	_sendAs = nullptr;
+	_chooseBotUse = nullptr;
+	_chooseBotUseId = 0;
 	_silent = nullptr;
 	if (!_history) {
 		return;
 	}
 	const auto peer = _history->peer;
+	_botUseVideoStream = bool(args.videoStream);
 	initSendAsButton(peer, args.videoStream);
+	updateBotUseButton();
+	updateControlsVisibility();
+	updateControlsGeometry(_wrap->size());
+	session().botUseChats().changes(
+	) | rpl::filter([=](PeerId changed) {
+		return _history && _history->peer->id == changed;
+	}) | rpl::on_next([=] {
+		updateAttachBotsMenu();
+		if (updateBotUseButton()) {
+			updateControlsVisibility();
+			updateControlsGeometry(_wrap->size());
+			orderControls();
+		}
+	}, _historyLifetime);
 	if (peer->isChat() && peer->asChat()->noParticipantInfo()) {
 		session().api().requestFullPeer(peer);
 	} else if (const auto channel = peer->asMegagroup()) {
@@ -1800,9 +1825,9 @@ void ComposeControls::setupCommentsShownNewDot() {
 
 void ComposeControls::setToggleCommentsButton(
 		rpl::producer<ToggleCommentsState> state) {
-	if (!state) {
-		delete base::take(_commentsShown);
-	} else {
+	_commentsShownNewDot = nullptr;
+	delete base::take(_commentsShown);
+	if (state) {
 		_commentsShown = Ui::CreateChild<Ui::IconButton>(
 			_wrap.get(),
 			_st.commentsShow);
@@ -1813,12 +1838,9 @@ void ComposeControls::setToggleCommentsButton(
 		_commentsShownHidden.value(
 		) | rpl::on_next([=](bool hidden) {
 			if (_commentsShown->isHidden() != hidden) {
-				if (hidden) {
-					_commentsShown->hide();
-				} else {
-					_commentsShown->show();
-					updateControlsGeometry(_wrap->size());
-				}
+				_commentsShown->setVisible(!hidden);
+				updateControlsGeometry(_wrap->size());
+				_commentsShown->parentWidget()->update();
 			}
 		}, _commentsShown->lifetime());
 		std::move(
@@ -2061,7 +2083,7 @@ void ComposeControls::setupStarsEffectsCanvas() {
 			const auto scale = kStarEffectScaleMin
 				+ (kStarEffectScaleMax - kStarEffectScaleMin) * opacity;
 
-			const auto rotation = qSin(-M_PI_2
+			const auto rotation = std::sin(-M_PI_2
 				+ M_PI * (animation->shift + animation->progress)
 			) * kStarEffectRotationMax;
 			const auto target = QRect(
@@ -2293,10 +2315,17 @@ void ComposeControls::offerRichPaste(not_null<const QMimeData*> data) {
 	const auto cursor = _field->textCursor();
 	const auto position = cursor.position();
 	const auto anchor = cursor.anchor();
+	const auto from = std::min(position, anchor);
+	const auto till = std::max(position, anchor);
+	const auto textFrom = int(_field->getTextWithTagsPart(0, from).text.size());
+	const auto textTill = int(_field->getTextWithTagsPart(0, till).text.size());
+	const auto tail = cursor.document()->characterCount() - till;
 	crl::on_main(_wrap.get(), [=] {
 		const auto now = _field->getTextWithTags();
 		const auto parent = _pasteToastParent.data();
-		if ((now == was) || !parent) {
+		if ((now == was)
+			|| !parent
+			|| !_richPasteOfferThrottle.take()) {
 			return;
 		}
 		ChatHelpers::ShowRichPasteToast({
@@ -2310,15 +2339,14 @@ void ComposeControls::offerRichPaste(not_null<const QMimeData*> data) {
 					if (!unchanged) {
 						return;
 					}
-					const auto &markdown = decision->markdown;
-					const auto from = std::min(position, anchor);
 					_field->setTextWithTags(ChatHelpers::TextWithTagsReplaced(
 						was,
-						from,
-						std::max(position, anchor),
-						markdown));
+						textFrom,
+						textTill,
+						decision->markdown));
 					_field->setCursorPosition(
-						from + int(markdown.text.size()));
+						_field->textCursor().document()->characterCount()
+							- tail);
 					return;
 				}
 				if (unchanged) {
@@ -2356,7 +2384,8 @@ bool ComposeControls::confirmMediaEdit(Ui::PreparedList &list) {
 			_header->suggestOptions(),
 			queryToEdit.spoilered,
 			queryToEdit.options.invertCaption,
-			crl::guard(_wrap.get(), [=] { cancelEditMessage(); }));
+			crl::guard(_wrap.get(), [=] { cancelEditMessage(); }),
+			_editBotUse);
 	} else {
 		_show->showToast(tr::lng_edit_caption_attach(tr::now));
 	}
@@ -2388,6 +2417,9 @@ auto ComposeControls::inlineResultChosen() const
 }
 
 void ComposeControls::showStarted() {
+	if (focused()) {
+		_parent->setFocus();
+	}
 	if (_inlineResults) {
 		_inlineResults->hideFast();
 	}
@@ -2466,6 +2498,7 @@ TextWithTags ComposeControls::getTextWithAppliedMarkdown() const {
 void ComposeControls::clear(bool keepReply) {
 	// Otherwise cancelReplyMessage() will save the draft.
 	const auto saveTextDraft = keepReply || !replyingToMessage();
+	clearDraftNoForwards();
 	setFieldText(
 		{},
 		saveTextDraft ? TextUpdateEvent::SaveDraft : TextUpdateEvent());
@@ -2513,21 +2546,84 @@ void ComposeControls::saveFieldToHistoryLocalDraft(bool save) {
 	const auto suggest = _currentSuggest
 		? _currentSuggest()
 		: SuggestOptions();
+	const auto existing = _history->draft(key);
+	const auto noForwards = BotUse::Selected(_history)
+		&& existing
+		&& existing->noForwards;
 	if (shouldShowRichDraftPreview()) {
 		_history->clearDraft(key);
-	} else if (_preview && (id || suggest.exists || !_field->empty())) {
+	} else if (_preview
+		&& (id || suggest.exists || !_field->empty() || noForwards)) {
+		auto draft = std::make_unique<Data::Draft>(
+			_field,
+			id,
+			suggest,
+			_preview->draft());
+		draft->noForwards = noForwards;
 		_history->setDraft(
 			key,
-			std::make_unique<Data::Draft>(
-				_field,
-				id,
-				suggest,
-				_preview->draft()));
+			std::move(draft));
 	} else {
 		_history->clearDraft(key);
 	}
 	if (save) {
 		saveDraftWithTextNow();
+	}
+}
+
+bool ComposeControls::draftNoForwards() const {
+	if (!_history || !BotUse::Selected(_history)) {
+		return false;
+	}
+	const auto draft = shouldShowRichDraftPreview()
+		? cloudDraft()
+		: _history->draft(draftKey(DraftType::Normal));
+	return draft && draft->noForwards;
+}
+
+void ComposeControls::toggleDraftNoForwards() {
+	if (!_history || !BotUse::Selected(_history)) {
+		return;
+	} else if (shouldShowRichDraftPreview()) {
+		if (const auto draft = cloudDraft()) {
+			draft->noForwards = !draft->noForwards;
+		}
+		return;
+	}
+	const auto key = draftKey(DraftType::Normal);
+	if (!key) {
+		return;
+	}
+	const auto before = draftNoForwards();
+	saveFieldToHistoryLocalDraft(false);
+	if (const auto draft = _history->draft(key)) {
+		draft->noForwards = !before;
+		if (!draft->noForwards && Data::DraftIsNull(draft)) {
+			_history->clearDraft(key);
+		}
+	} else {
+		auto fresh = std::make_unique<Data::Draft>(
+			_field,
+			_header->getDraftReply(),
+			_currentSuggest ? _currentSuggest() : SuggestOptions(),
+			_preview ? _preview->draft() : Data::WebPageDraft());
+		fresh->noForwards = true;
+		_history->setDraft(key, std::move(fresh));
+	}
+}
+
+void ComposeControls::clearDraftNoForwards() {
+	if (!_history) {
+		return;
+	}
+	const auto key = draftKey(DraftType::Normal);
+	const auto draft = _history->draft(key);
+	if (!draft) {
+		return;
+	}
+	draft->noForwards = false;
+	if (Data::DraftIsNull(draft)) {
+		_history->clearDraft(key);
 	}
 }
 
@@ -2651,6 +2747,106 @@ void ComposeControls::migrateFieldToRichEditor() {
 	}
 }
 
+Data::DraftKey ComposeControls::composeStashKey() const {
+	return draftKey(DraftType::Normal);
+}
+
+bool ComposeControls::canUseComposeStash() const {
+	return _history
+		&& composeStashKey()
+		&& !isEditingMessage()
+		&& !_writeRestriction.current()
+		&& !_voiceRecordBar->isActive();
+}
+
+bool ComposeControls::hasStashableContent() const {
+	return _history
+		&& (!_field->empty()
+			|| replyingToMessage().replying()
+			|| readyToForward()
+			|| shouldShowRichDraftPreview()
+			|| (_currentSuggest && _currentSuggest().exists));
+}
+
+bool ComposeControls::canSendTexts() const {
+	return _canSendTexts.current();
+}
+
+std::unique_ptr<Data::ComposeStash> ComposeControls::takeComposeStash() {
+	Expects(_history != nullptr);
+
+	if (!hasStashableContent()) {
+		return nullptr;
+	}
+	auto result = std::make_unique<Data::ComposeStash>();
+	const auto rich = shouldShowRichDraftPreview() ? cloudDraft() : nullptr;
+	if (rich) {
+		result->draft = *rich;
+		result->draft.saveRequestId = 0;
+		clearRichDraft();
+		cancelReplyMessage();
+	} else {
+		result->draft = Data::Draft(
+			_field,
+			replyingToMessage(),
+			_currentSuggest ? _currentSuggest() : SuggestOptions(),
+			_preview ? _preview->draft() : Data::WebPageDraft());
+		clear();
+	}
+	saveDraftWithTextNow();
+	saveCloudDraft();
+	result->forward = _history->forwardDraft(_topicRootId, _monoforumPeerId);
+	if (!result->forward.ids.empty()) {
+		cancelForward();
+	}
+	if (_stashHintManager) {
+		_stashHintManager->markUsed();
+	}
+	return result;
+}
+
+void ComposeControls::applyComposeStash(Data::ComposeStash &&stash) {
+	Expects(_history != nullptr);
+
+	const auto key = composeStashKey();
+	if (stash.draft.hasRichMessage()) {
+		_history->clearDraft(key);
+		const auto cloud = _history->createCloudDraft(
+			_topicRootId,
+			_monoforumPeerId,
+			&stash.draft);
+		applyDraft();
+		const auto thread = _history->threadFor(
+			_topicRootId,
+			_monoforumPeerId);
+		if (cloud && thread) {
+			session().api().saveDraftToCloud(not_null{ thread }, *cloud);
+		}
+	} else {
+		const auto reply = stash.draft.reply;
+		_history->setDraft(
+			key,
+			std::make_unique<Data::Draft>(std::move(stash.draft)));
+		applyDraft();
+		if (!_canSendTexts.current() && reply.replying()) {
+			replyToMessage(reply);
+		}
+		saveDraftWithTextNow();
+		saveCloudDraft();
+	}
+	if (!stash.forward.ids.empty()) {
+		_history->setForwardDraft(
+			_topicRootId,
+			_monoforumPeerId,
+			std::move(stash.forward));
+		updateForwarding();
+	}
+	if (_stashHintManager) {
+		_stashHintManager->markUsed();
+	}
+	focus();
+}
+
 void ComposeControls::migrateScheduledFieldToRichEditor() {
 	Expects(_history != nullptr);
 	Expects(!isEditingMessage());
@@ -2707,6 +2903,9 @@ void ComposeControls::hidePanelsAnimated() {
 void ComposeControls::hide() {
 	showStarted();
 	_hidden = true;
+	if (_stashHintManager) {
+		_stashHintManager->hide();
+	}
 }
 
 void ComposeControls::show() {
@@ -2720,6 +2919,17 @@ void ComposeControls::show() {
 }
 
 void ComposeControls::init() {
+	if (session().settings().shouldShowStashHint()) {
+		_stashHintManager = std::make_unique<Controls::StashHintManager>(
+			Controls::StashHintDescriptor{
+				.session = _session,
+				.toastParent = [=]() -> QWidget* {
+					return _pasteToastParent.data();
+				},
+				.fieldText = [=] { return _field->getTextWithTags().text; },
+				.canUse = [=] { return canUseComposeStash(); },
+			});
+	}
 	if (_attachToggle) {
 		_attachToggle->setAccessibleName(tr::lng_attach(tr::now));
 	}
@@ -2781,7 +2991,10 @@ void ComposeControls::init() {
 	) | rpl::on_next([=](const auto &id) {
 		unregisterDraftSources();
 		updateSendButtonType();
-		if (_history && updateSendAsButton(nullptr)) {
+		const auto sendAsChanged = _history
+			&& updateSendAsButton(nullptr);
+		const auto botUseChanged = updateBotUseButton();
+		if (sendAsChanged || botUseChanged) {
 			updateControlsVisibility();
 			updateControlsGeometry(_wrap->size());
 			orderControls();
@@ -2805,7 +3018,8 @@ void ComposeControls::init() {
 			_header->suggestOptions(),
 			queryToEdit.spoilered,
 			queryToEdit.options.invertCaption,
-			crl::guard(_wrap.get(), [=] { cancelEditMessage(); }));
+			crl::guard(_wrap.get(), [=] { cancelEditMessage(); }),
+			_editBotUse);
 	}, _wrap->lifetime());
 
 	_header->editOptionsRequests(
@@ -3167,6 +3381,17 @@ void ComposeControls::initField() {
 	QObject::connect(linkPreviewShortcut, &QShortcut::activated, [=] {
 		editLinkPreview();
 	});
+	const auto botUseShortcut = new QShortcut(
+		QKeySequence("ctrl+shift+b"),
+		rawTextEdit,
+		nullptr,
+		nullptr,
+		Qt::WidgetShortcut);
+	QObject::connect(botUseShortcut, &QShortcut::activated, [=] {
+		if (_history && !_botUseVideoStream) {
+			Ui::ShowChooseBotUse(_history->peer, _show);
+		}
+	});
 	rpl::merge(
 		_field->scrollTop().changes() | rpl::to_empty,
 		base::qt_signal_producer(
@@ -3356,6 +3581,12 @@ bool ComposeControls::suppressSendAction() const {
 }
 
 void ComposeControls::fieldChanged() {
+	if (_stashHintManager) {
+		const auto save = bool(_textUpdateEvents & TextUpdateEvent::SaveDraft);
+		const auto sendTyping = bool(
+			_textUpdateEvents & TextUpdateEvent::SendTyping);
+		_stashHintManager->trackChange(save && sendTyping);
+	}
 	const auto typing = (!_inlineBot
 		&& !_header->isEditingMessage()
 		&& (_textUpdateEvents & TextUpdateEvent::SendTyping)
@@ -4432,7 +4663,8 @@ void ComposeControls::initVoiceRecordBar() {
 		return Ui::AppInFocus();
 	}) | rpl::on_next([=](not_null<Shortcuts::Request*> request) {
 		using Command = Shortcuts::Command;
-		if (Data::CanSendAnything(_history->peer, !_topicRootId)) {
+		if (showRecordButton()
+			&& Data::CanSendAnything(_history->peer, !_topicRootId)) {
 			const auto isVoice = request->check(Command::RecordVoice, 1);
 			const auto isRound = !isVoice
 				&& request->check(Command::RecordRound, 1);
@@ -4896,6 +5128,7 @@ void ComposeControls::updateSendButtonType() {
 void ComposeControls::updateSendLockBadge() {
 	const auto page = shownRichMessage();
 	_sendLockBadge.fire(page
+		&& (!_history || !BotUse::RichDraftBot(_history, replyingToMessage()))
 		&& !session().premium()
 		&& Iv::RichPageUsesPremiumFormatting(*page));
 }
@@ -4914,16 +5147,19 @@ void ComposeControls::updateControlsGeometry(QSize size) {
 		&& !_commentsShown->isHidden();
 	const auto giftToUser = _giftToUser
 		&& !_giftToUser->isHidden();
+	const auto identityWidth = _chooseBotUse
+		? _chooseBotUse->width()
+		: (_sendAs ? _sendAs->width() : 0);
 	const auto fieldWidth = size.width()
 		- (commentsShown
 			? (_commentsShown->width() + _st.commentsSkip)
 			: 0)
-		- ((_attachToggle || _sendAs) ? _st.padding.left() : _st.fieldLeft)
+		- ((_attachToggle || identityWidth) ? _st.padding.left() : _st.fieldLeft)
 		- (_botMenu.button
 			? (st::historyBotMenuSkip + _botMenu.button->width())
 			: 0)
 		- (_attachToggle ? _attachToggle->width() : 0)
-		- (_sendAs ? _sendAs->width() : 0)
+		- identityWidth
 		- _st.padding.right()
 		- _send->width()
 		- (_editStars ? _editStars->width() : 0)
@@ -4969,7 +5205,7 @@ void ComposeControls::updateControlsGeometry(QSize size) {
 		_commentsShown->moveToLeft(left, buttonsTop);
 		left += _commentsShown->width() + _st.commentsSkip;
 	}
-	left += (_attachToggle || _sendAs) ? _st.padding.left() : _st.fieldLeft;
+	left += (_attachToggle || identityWidth) ? _st.padding.left() : _st.fieldLeft;
 	if (_botMenu.button) {
 		const auto skip = st::historyBotMenuSkip;
 		_botMenu.button->moveToLeft(left + skip, buttonsTop + skip);
@@ -4982,7 +5218,10 @@ void ComposeControls::updateControlsGeometry(QSize size) {
 		_attachToggle->moveToLeft(left, buttonsTop);
 		left += _attachToggle->width();
 	}
-	if (_sendAs) {
+	if (_chooseBotUse) {
+		_chooseBotUse->moveToLeft(left, buttonsTop);
+		left += _chooseBotUse->width();
+	} else if (_sendAs) {
 		_sendAs->moveToLeft(left, buttonsTop);
 		left += _sendAs->width();
 	}
@@ -5100,7 +5339,10 @@ void ComposeControls::updateControlsVisibility() {
 		_ttlInfo->setVisible(!hide);
 	}
 	if (_sendAs) {
-		_sendAs->show();
+		_sendAs->setVisible(!_chooseBotUse);
+	}
+	if (_chooseBotUse) {
+		_chooseBotUse->show();
 	}
 	if (_replaceMedia) {
 		_replaceMedia->show();
@@ -5582,6 +5824,37 @@ bool ComposeControls::updateSendAsButton(
 	return true;
 }
 
+bool ComposeControls::updateBotUseButton() {
+	const auto peer = _history ? _history->peer.get() : nullptr;
+	const auto choice = peer
+		? session().botUseChats().choice(peer->id)
+		: BotUse::ChatChoice();
+	const auto bot = (_features.sendAs
+		&& !_botUseVideoStream
+		&& peer
+		&& !isEditingMessage()
+		&& Ui::CanChooseBotUse(peer)
+		&& choice.enabled)
+		? choice.bot
+		: 0;
+	if (_chooseBotUse && _chooseBotUseId == bot) {
+		return false;
+	}
+	const auto hadButton = (_chooseBotUse != nullptr);
+	_chooseBotUse = nullptr;
+	_chooseBotUseId = bot;
+	if (!bot) {
+		return hadButton;
+	}
+	const auto &st = _st.chooseSendAs;
+	_chooseBotUse = std::make_unique<Ui::ChooseBotUseButton>(
+		_wrap.get(),
+		st.button);
+	_chooseBotUse->setAccessibleName(tr::lng_bot_use_choose(tr::now));
+	Ui::SetupChooseBotUseButton(_chooseBotUse.get(), peer, _show);
+	return true;
+}
+
 void ComposeControls::updateAttachBotsMenu() {
 	_attachBotsMenu = nullptr;
 	if (!_features.attachBotsMenu
@@ -5756,14 +6029,15 @@ void ComposeControls::updateHeight() {
 
 void ComposeControls::editMessage(
 		FullMsgId id,
-		const TextSelection &selection) {
+		const TextSelection &selection,
+		std::optional<uint64> bot) {
 	const auto item = session().data().message(id);
 	if (!item) {
 		return;
 	} else if (Iv::Editor::ActivateEditWindowFor(_session, id)) {
 		return;
 	}
-	editMessage(item);
+	editMessage(item, bot);
 	if (_header->editMsgId() != id) {
 		return;
 	}
@@ -5774,7 +6048,9 @@ void ComposeControls::editMessage(
 	focus();
 }
 
-void ComposeControls::editMessage(not_null<HistoryItem*> item) {
+void ComposeControls::editMessage(
+		not_null<HistoryItem*> item,
+		std::optional<uint64> bot) {
 	Expects(_history != nullptr);
 
 	if (draftKey(DraftType::Edit) == Data::DraftKey::None()) {
@@ -5785,7 +6061,7 @@ void ComposeControls::editMessage(not_null<HistoryItem*> item) {
 			_show->showToast(tr::lng_edit_error(tr::now));
 			return;
 		}
-		Iv::Editor::ShowEditBox(_regularWindow, item);
+		Iv::Editor::ShowEditBox(_regularWindow, item, bot);
 		return;
 	} else if (_voiceRecordBar->isActive()) {
 		_show->showToast(tr::lng_edit_caption_voice(tr::now));
@@ -5801,6 +6077,7 @@ void ComposeControls::editMessage(not_null<HistoryItem*> item) {
 	if (!isEditingMessage()) {
 		saveFieldToHistoryLocalDraft();
 	}
+	_editBotUse = bot.value_or(BotUse::EditBot(item));
 	const auto editData = PrepareEditText(item);
 	const auto cursor = MessageCursor{
 		int(editData.text.size()),
@@ -5858,7 +6135,8 @@ bool ComposeControls::updateReplaceMediaButton() {
 				_header->suggestOptions(),
 				queryToEdit.spoilered,
 				queryToEdit.options.invertCaption,
-				crl::guard(_wrap.get(), [=] { cancelEditMessage(); }));
+				crl::guard(_wrap.get(), [=] { cancelEditMessage(); }),
+				_editBotUse);
 		});
 	});
 	return true;
@@ -5869,6 +6147,7 @@ void ComposeControls::cancelEditMessage() {
 	Expects(draftKeyCurrent() != Data::DraftKey::None());
 
 	_canReplaceMedia = _canAddMedia = false;
+	_editBotUse = 0;
 	_photoEditMedia = nullptr;
 	updateReplaceMediaButton();
 	_header->editMessage({}, {});

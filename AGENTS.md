@@ -46,12 +46,21 @@ done | sort
 - Browsing is read-only. Listing, summarizing, comparing, or recommending tasks
   never edits `state.yaml`, publishes a lifecycle commit, or starts
   implementation, no matter how small the task looks.
-- Acting on tasks goes through the workflow skills instead of by hand:
-  `perform-task <slug or full id>` starts or resumes and performs exactly one
-  known task, `continue` processes the inbox and drains eligible shared work,
-  and new requests are written to the ignored `../ai-tdesktop/inbox/inbox.md`
-  and routed by `process-inbox`. Source commits owned by a task use the
-  three-line form described under `## Commits`.
+- Acting on an existing queue task goes through the workflow skills instead of
+  by hand: `perform-task <slug or full id>` starts or resumes and performs
+  exactly one known task, and `continue` drains eligible shared work. Source
+  commits owned by a task use the three-line form described under `## Commits`.
+- A request the user makes in conversation is ordinary work: do it directly in
+  this checkout. Do not write it to the ignored `../ai-tdesktop/inbox/inbox.md`,
+  and do not run `process-inbox` or `continue` over it, unless the user asks for
+  that. The queue's planning, review and evidence campaign costs hours, so
+  spending it on a request the user expected you to just do is a real error, not
+  thoroughness.
+- You may *offer* the queue when the work genuinely earns it: a large or
+  ambiguous change, one whose correctness needs a substantial review campaign, or one
+  that is safety-, security- or data-safety-critical. Make the offer in one
+  line, say why, and route it only after the user approves. Absent approval,
+  implement it directly and say what you skipped.
 - Never guess between similarly named tasks. Report the matching full ids and
   let the user choose.
 
@@ -100,7 +109,7 @@ cmake --build out --config Debug --target Telegram
 
 That's it. The `out/` directory is already configured. The executable will be at `out/Debug/Telegram.exe`.
 
-**On Linux, build and test with:**
+**On Linux, build with:**
 
 ```bash
 source .env && bash ./scripts/build_debug.sh
@@ -115,7 +124,7 @@ unavailable. Do not run this build script in a sandboxed environment.
 cmake --build "l:\Telegram\tx64\out" --config Debug --target Telegram
 ```
 
-**Never build Release** - it's extremely heavy and not needed for testing changes.
+**Never build Release** - it's extremely heavy and not needed for routine changes.
 
 ## Platform-Specific Requirements
 
@@ -147,7 +156,7 @@ cmake --build "l:\Telegram\tx64\out" --config Debug --target Telegram
 ### Linux
 - Build dependencies in `../Libraries`
 - Set `QT` environment variable if needed
-- Use `source .env && bash ./scripts/build_debug.sh` for build and test; run it
+- Use `source .env && bash ./scripts/build_debug.sh` for builds; run it
   outside the sandbox.
 
 ## Key Files
@@ -177,77 +186,31 @@ older `kKeysCount`. The characteristic failure is:
   `Lang::Instance::applyValue()`, `fillFromSerialized()`, and
   `Local::readLangPack()`.
 
-If this exact startup failure repeats twice, do not change the implementation,
-test overlay, or portable account. Stop only this checkout's exact Telegram
-process. Because Xcode's `CONFIGURATION_BUILD_DIR` is `out/Debug`, make a
-safety copy of every existing portable folder outside `out/` before cleaning:
-
-```bash
-portable_backup_root="$(mktemp -d "${TMPDIR:-/tmp}/tdesktop-portable-clean.XXXXXX")"
-for portable_name in \
-  TelegramForcePortable \
-  test_TelegramForcePortable \
-  real_TelegramForcePortable; do
-  if [ -d "out/Debug/$portable_name" ]; then
-    ditto "out/Debug/$portable_name" "$portable_backup_root/$portable_name"
-  fi
-done
-```
-
-Require every expected backup copy to exist before continuing. Then perform
-one full Xcode Debug clean and rebuild:
-
-```bash
-cmake --build out --config Debug --target clean
-cmake --build out --config Debug --target Telegram
-```
-
-Afterward, restore a portable folder from the backup only when its original
-path is missing; never overwrite a folder that survived the clean. Verify all
-three original folder names that existed before the clean are present, keep
-the backup until the rebuilt app completes one successful launch, and record
-its path if the run stops before verification. Then rerun the same test once.
-If the signature persists after that clean rebuild, continue normal crash
-diagnosis or report the blocker. Do not loop clean rebuilds.
+If this exact startup failure repeats twice, stop and report the failure. Do
+not launch the app, alter portable data, or perform a clean rebuild as an
+automated recovery step.
 
 ### Build output locks
 
-For builds owned by the autonomous `continue` / `perform-task` workflow, read
-and follow `.agents/shared/build-lock-recovery.md`. PDB, EXE, OBJ, and other
-build-output lock errors are recoverable: stop only the exact checkout
-executable or verified build-tree holders, delete only exact named artifacts
-inside that checkout's build tree, and retry within the bounded recovery
-budget. Never stop an installed Telegram client, another checkout, an IDE, or
-an unknown process.
-
-Outside that autonomous workflow, an exact checkout executable may be running
-because the user is testing it. Do not terminate it or delete locked build
-outputs without explicit permission. Report the exact locked path and ask the
-user to close that checkout's Telegram/debugger before rebuilding.
+Do not terminate a Telegram process or delete locked build output. Report the
+exact locked path and ask the user to close the relevant Telegram/debugger
+before rebuilding.
 
 ## Best Practices
 
 1. **Always use Debug builds** - Release builds are extremely heavy
-2. **Don't build Release configuration** - it's too heavy for testing
+2. **Don't build Release configuration** - it is unnecessary for routine changes
 
-## Debug-Only Code
+## Agent Validation Boundary
 
-Production translation units stay free of debug machinery. The permanent test
-harness lives in `Telegram/SourceFiles/test/`, and the disposable `-testagent`
-overlay owns per-task instrumentation; production code carries at most a thin
-single-call seam (a `Test::Fire()`-style waitpoint or a live-object
-publication at a construction seam).
-
-- Do not add `#ifdef _DEBUG` blocks, debug-only types, debug state, mutexes,
-  counters, or observation structs to production headers or sources. When a
-  behavior cannot be observed without such machinery, that is a harness gap:
-  extend the `test/` helpers or the overlay instead.
-- Never commit debugging machinery interleaved with working code in the same
-  translation unit. A permanent helper belongs under `test/`; a temporary one
-  belongs in the overlay and is never retained.
-- Exceptions exist — a few `#ifdef _DEBUG` hooks are deliberately kept in
-  production files — but they are exceptions and each new one needs a solid,
-  stated reason. "The test needed it" is not one.
+Agents must not create, modify, or run test cases, test harnesses, test
+overlays, test data, probes, or test-only instrumentation. Agents must not
+launch Telegram or any other GUI application, drive an interface, capture
+runtime screenshots, or use Computer Use for validation. This applies even
+when a queue task, a generated plan, or an existing workflow describes a
+local validation path. Use code review, static inspection, and any
+non-interactive build explicitly requested by the user; report runtime
+behavior as unverified for the user to check.
 
 ## Text File Format
 
@@ -260,15 +223,13 @@ publication at a construction seam).
 - Subject: one concise, plain-language line summarizing the change, ~50-60 characters, matching the style of recent `git log` subjects. This is usually the entire message.
 - Decide the `[ai] ` prefix separately for each commit. Use it only when every
   retained change in that commit, and the commit's purpose, are exclusively
-  about the AI workflow: the agent harness, skills, prompts, custom commands,
-  agent documentation, or AI testing infrastructure. Typical qualifying paths
-  include `Telegram/SourceFiles/test/`, `.agents/`, `.claude/`, `.grok/`,
+  about the AI workflow: skills, prompts, custom commands, or agent
+  documentation. Typical qualifying paths include `.agents/`, `.claude/`, `.grok/`,
   `AGENTS.md`, `CLAUDE.md`, and `GROK.md`, but paths alone do not decide the
-  prefix. Product-specific test seams, app code, and build-system integration do
-  not qualify merely because agents use them for verification. Split mixed
-  workflow and product work into separate commits when practical; otherwise the
-  mixed commit must not use `[ai] `. Do not count the disposable test overlay or
-  external AI task artifacts. Every other commit must not contain `[ai]`
+  prefix. Product-specific code and build-system integration do not qualify
+  merely because agents use them for verification. Split mixed workflow and
+  product work into separate commits when practical; otherwise the mixed commit
+  must not use `[ai] `. Do not count external AI task artifacts. Every other commit must not contain `[ai]`
   anywhere.
 - The `[ai] ` prefix marks the commit's scope, never its authorship. It does
   not mean "authored by an AI": an AI-authored product fix takes a plain
@@ -297,11 +258,13 @@ Both app-level (`Core::Settings`) and session-level (`Main::SessionSettings`) us
 
 ## Coding Style
 
-**Do NOT write useless comments in code:**
+**Comments are rationed:**
 
-This is important! Do not write single-line comments that describe what the next line does - they are bloat. Comments are allowed ONLY to describe complex algorithms in detail, when the explanation requires at least 4-5 lines. Self-documenting code with clear variable and function names is preferred.
+A comment is one line; two or three only when the block opens with `// WHY:`. A commit may add two comment lines plus one such exception, and a trailing comment is a line too; only `} // namespace X` closers and `#endif // X` labels are free. Say why, never what. Hooks enforce it.
 
 Do not remove existing comments just to satisfy this rule. Preserve comments unless your change makes them incorrect or truly obsolete; when moving or refactoring code, move the useful comment with it. Inline comments that label positional arguments for generated or schema-driven APIs (for example TL/MTP constructors) are useful because the field names are not visible in the call itself.
+
+**Never cite line numbers** in comments, `README.md` files or other checked-in text. Name the function, member, constant or type, and its file when that helps: write `Runner::finish()` in `test_runner.cpp`, not `test_runner.cpp:NNN` or `:NNN-MMM`. Line numbers drift with every edit and nothing updates them. This covers submodule, Qt and other third-party sources too. Quoted log or crash text stays verbatim.
 
 ```cpp
 // BAD - don't do this:
@@ -314,12 +277,14 @@ if (user->isPremium()) {
 auto name = user->name();
 if (user->isPremium()) {
 
-// ACCEPTABLE - complex algorithm explanation (4+ lines):
-// The algorithm works by first collecting all visible messages
-// in the viewport, then calculating their intersection with
-// the clip rectangle. Messages are grouped by date headers,
-// and we need to account for sticky headers that may overlap
-// with the first message in each group.
+// ACCEPTABLE - one line, and it carries a reason:
+_limit = kDefaultLimit; // the server rejects anything larger
+
+// ACCEPTABLE - the exception: opens with WHY, three lines at most,
+// once per commit.
+// WHY: the server sends the id before the peer exists, so the row is
+// created empty and filled on the next update, or the list flickers
+// on every reconnect.
 ```
 
 **Style and formatting rules** are in `REVIEW.md` — see that file for empty-line-before-closing-brace, operator placement in multi-line expressions, if-with-initializer, and other mechanical style rules.
@@ -752,6 +717,7 @@ auto filesTextProducer = tr::lng_files_selected(
 - Omit `tr::now` for reactive `rpl::producer<QString>`
 - Placeholders use `lt_tag_name, value` pattern
 - For `{count}`: immediate uses `int`, reactive uses `rpl::producer<float64>` with `| tr::to_count()`
+- Every plural form, `#one` included, keeps `{count}`: many languages put more than 1 into their "one" category (Russian: 21, 31, ...), so a `#one` phrase written for exactly 1 is wrong for them. When exactly 1 deserves different wording, add a separate non-plural key and pick it in code, so every language gets that special case
 - Move producers with `std::move` when passing to placeholders
 - Rich text projectors — these `tr::` helpers serve double duty: as the **last argument** (projector) they set the return type to `TextWithEntities`, and as **placeholder values** they wrap individual substitutions in formatting. Always prefer them over `Ui::Text::Bold()`, `Ui::Text::RichLangValue`, etc. — see REVIEW.md for the full mapping.
   - `tr::marked` — basic projection, converts `QString` to `TextWithEntities`
@@ -848,3 +814,30 @@ The `Error` template parameter defaults to `rpl::no_error`: `rpl::producer<Type,
 - Pass `rpl::lifetime` to `on_...` methods or store returned lifetime
 - Use `rpl::duplicate(producer)` to reuse a producer multiple times
 - Combined producers automatically unpack tuples in lambdas (works with `rpl::map`, `rpl::filter`, and `rpl::on_next`)
+
+### Per-subscription state
+
+`rpl::on_next` stores the handler by value. Each emission invokes a *copy* of that stored handler, so a nested emit does not re-enter the running callable. Writes a `mutable` lambda makes to its own captures land on the copy and are discarded, so they never become per-subscription state.
+
+```cpp
+// BAD - compiles, runs, and grew is just value > 0 every time:
+events | rpl::on_next([last = 0](int value) mutable {
+    const auto grew = (value > last);
+    last = value;
+    if (grew) {
+        // ...
+    }
+}, lifetime);
+
+// GOOD - state lives beside the handler:
+const auto last = lifetime.make_state<int>(0);
+events | rpl::on_next([=](int value) {
+    const auto grew = (value > *last);
+    *last = value;
+    if (grew) {
+        // ...
+    }
+}, lifetime);
+```
+
+Keep per-subscription state in `lifetime.make_state<T>()`, behind a `shared_ptr`, or on the object that owns the subscription. A `mutable` lambda that is one-shot — `rpl::take(1)`, a self-destroying subscription, a `crl::on_main` or `crl::async` callback, a `done` or `error` callback — is not this trap.

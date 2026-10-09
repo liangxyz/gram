@@ -51,10 +51,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_cloud_themes.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "info/info_memento.h"
 #include "info/profile/info_profile_badge.h"
 #include "info/profile/info_profile_emoji_status_panel.h"
 #include "info/profile/info_profile_phone_menu.h"
 #include "info/profile/info_profile_values.h"
+#include "info/stories/info_stories_widget.h"
 #include "lang/lang_cloud_manager.h"
 #include "lang/lang_instance.h"
 #include "lang/lang_keys.h"
@@ -81,6 +83,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_premium.h"
 #include "settings/sections/settings_privacy_security.h"
 #include "settings/sections/settings_enhanced.h"
+#include "settings/sections/settings_bot_use.h"
 #include "settings/settings_scale_preview.h"
 #include "storage/localstorage.h"
 #include "ui/basic_click_handlers.h"
@@ -395,10 +398,13 @@ void BuildSectionButtons(SectionBuilder &builder) {
 	const auto showOther = builder.showOther();
 
 	if (!session->supportMode()) {
-		builder.addSectionButton({
+		builder.addButton({
 			.title = tr::lng_settings_my_account(),
-			.targetSection = InformationId(),
 			.icon = { &st::menuIconProfile },
+			.onClick = [=] {
+				controller->showSection(
+					Info::Stories::MakeMyProfile(session->user()));
+			},
 			.keywords = { u"profile"_q, u"edit"_q, u"information"_q },
 		});
 	}
@@ -508,6 +514,12 @@ void BuildEnhancedSection(SectionBuilder &builder) {
 		.targetSection = EnhancedId(),
 		.icon = { &st::menuIconManage },
 		.keywords = { u"enhanced"_q },
+	});
+	builder.addSectionButton({
+		.title = tr::lng_bot_use_settings(),
+		.targetSection = BotUseSettingsId(),
+		.icon = { &st::menuIconBot },
+		.keywords = { u"bot"_q, u"bot use"_q, u"api"_q },
 	});
 }
 

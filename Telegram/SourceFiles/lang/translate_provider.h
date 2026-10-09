@@ -18,8 +18,24 @@ class Session;
 
 namespace Ui {
 
+extern const char kOptionTranslateUrlTemplate[];
+
+struct TranslateProviderInfo {
+	QString id;
+	QString name;
+	bool available = false;
+	bool selectable = true;
+};
+
+[[nodiscard]] QString SelectedTranslateProviderId();
+[[nodiscard]] QString SelectedTranslateCacheBase();
+[[nodiscard]] std::vector<TranslateProviderInfo> TranslateProviders();
+[[nodiscard]] QString TranslateProviderName(const QString &id);
+[[nodiscard]] bool TranslateProviderAvailable(const QString &id);
+
 [[nodiscard]] std::unique_ptr<TranslateProvider> CreateTranslateProvider(
-	not_null<Main::Session*> session);
+	not_null<Main::Session*> session,
+	Fn<void(QString)> errorReporter = {});
 
 [[nodiscard]] QString TranslateProviderTargetCode(LanguageId to);
 
