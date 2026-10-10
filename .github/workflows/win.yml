@@ -407,6 +407,10 @@ jobs:
           -D DESKTOP_APP_NO_PDB=ON -U DESKTOP_APP_DISABLE_X11_INTEGRATION
 
           cmake --build ..\out --config Release --parallel
+          if errorlevel 1 (
+            echo The parallel build did not finish; retrying the remaining work without parallelism.
+            cmake --build ..\out --config Release --parallel 1
+          )
 
       - name: Move artifact.
         if: env.UPLOAD_ARTIFACT == 'true'
