@@ -389,6 +389,41 @@ jobs:
               @{ Name = 'UsedGiB'; Expression = { [math]::Round($_.Used / 1GB, 2) } } |
             Format-Table -AutoSize
 
+      # The Windows runner for a private repository is 2 vCPU / 8 GB, and
+      # LNK1102 appeared when the link shared that budget with the last heavy
+      # compiles. Record the limits and raise the commit limit the linker error
+      # documents, before the build starts.
+      - name: Report and raise memory limits.
+        shell: pwsh
+        run: |
+          function Show-Limits([string]$when) {
+            $os = Get-CimInstance Win32_OperatingSystem
+            $cs = Get-CimInstance Win32_ComputerSystem
+            "$when RAM $([math]::Round($cs.TotalPhysicalMemory/1GB,2)) GiB, logical CPUs $env:NUMBER_OF_PROCESSORS, commit limit $([math]::Round($os.TotalVirtualMemorySize/1MB,2)) GiB, commit free $([math]::Round($os.FreeVirtualMemory/1MB,2)) GiB"
+            Get-CimInstance Win32_PageFileUsage | ForEach-Object {
+              "$when pagefile $($_.Name) allocated $([math]::Round($_.AllocatedBaseSize/1024,2)) GiB, peak $([math]::Round($_.PeakUsage/1024,2)) GiB"
+            }
+          }
+          Show-Limits 'Before:'
+
+          try {
+            $existing = @(Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue)
+            if ($existing.Count -gt 0) {
+              foreach ($pf in $existing) {
+                Set-CimInstance -InputObject $pf -Property @{ InitialSize = 16384; MaximumSize = 32768 } -ErrorAction Stop
+              }
+              "Enlarged pagefile: $($existing.Name -join ', ')"
+            } else {
+              New-CimInstance -ClassName Win32_PageFileSetting -Property @{ Name = 'C:\pagefile.sys'; InitialSize = 16384; MaximumSize = 32768 } -ErrorAction Stop | Out-Null
+              'Added a 16 to 32 GiB pagefile on C:.'
+            }
+          } catch {
+            "Pagefile adjustment failed, continuing: $_"
+          }
+
+          Start-Sleep -Seconds 10
+          Show-Limits 'After:'
+
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'
         run: |
