@@ -410,12 +410,12 @@ jobs:
             $existing = @(Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue)
             if ($existing.Count -gt 0) {
               foreach ($pf in $existing) {
-                Set-CimInstance -InputObject $pf -Property @{ InitialSize = 16384; MaximumSize = 32768 } -ErrorAction Stop
+                Set-CimInstance -InputObject $pf -Property @{ InitialSize = 8192; MaximumSize = 24576 } -ErrorAction Stop
               }
               "Enlarged pagefile: $($existing.Name -join ', ')"
             } else {
-              New-CimInstance -ClassName Win32_PageFileSetting -Property @{ Name = 'C:\pagefile.sys'; InitialSize = 16384; MaximumSize = 32768 } -ErrorAction Stop | Out-Null
-              'Added a 16 to 32 GiB pagefile on C:.'
+              New-CimInstance -ClassName Win32_PageFileSetting -Property @{ Name = 'C:\pagefile.sys'; InitialSize = 8192; MaximumSize = 24576 } -ErrorAction Stop | Out-Null
+              'Added an 8 to 24 GiB pagefile on C:.'
             }
           } catch {
             "Pagefile adjustment failed, continuing: $_"
