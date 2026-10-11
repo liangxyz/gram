@@ -1,8 +1,11 @@
 name: Linux Packaged.
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag to build'
+        required: true
 
 jobs:
 
@@ -11,12 +14,12 @@ jobs:
     name: Build Linux Release Package
     runs-on: avrea-ubuntu-latest-8-vcpu
     permissions:
-      contents: write
+      contents: read
       packages: read
 
     env:
       PACKAGE_NAME: yurigram
-      REPO_TAG: ${{ github.event.release.tag_name }}
+      REPO_TAG: ${{ github.event.inputs.tag_name }}
       IMAGE_REPOSITORY: ghcr.io/telegramdesktop/tdesktop/centos_env
 
     steps:
@@ -148,11 +151,3 @@ jobs:
         with: 
           name: ${{ env.PACKAGE_NAME }}-${{ env.REPO_TAG }}-${{ env.ARCH }}
           path: ${{ env.PACKAGE_NAME }}/pkg
-
-      - name: Upload Release Package
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          release_id: ${{ github.event.release.id }}
-          file: ${{ env.PACKAGE_NAME }}-${{ env.REPO_TAG }}-${{ env.ARCH }}.tar.gz
-        
