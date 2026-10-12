@@ -1,12 +1,15 @@
 name: Linux Packaged ARM64.
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag to build'
+        required: true
 
 env:
   PACKAGE_NAME: yurigram
-  REPO_TAG: ${{ github.event.release.tag_name }}
+  REPO_TAG: ${{ github.event.inputs.tag_name }}
   IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}/centos_env
   IMAGE_RECIPE_VERSION: v1
 
@@ -112,7 +115,7 @@ jobs:
     runs-on: avrea-ubuntu-latest-arm-8-vcpu
     timeout-minutes: 360
     permissions:
-      contents: write
+      contents: read
       packages: read
 
     steps:
@@ -187,10 +190,3 @@ jobs:
           name: ${{ env.PACKAGE_NAME }}-${{ env.REPO_TAG }}-aarch64
           path: ${{ env.PACKAGE_NAME }}/pkg
           if-no-files-found: error
-
-      - name: Upload release package.
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          release_id: ${{ github.event.release.id }}
-          file: ${{ steps.build.outputs.archive }}
