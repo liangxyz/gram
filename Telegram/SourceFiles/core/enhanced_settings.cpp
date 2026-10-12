@@ -9,8 +9,9 @@ https://github.com/TDesktop-x64/tdesktop/blob/dev/LEGAL
 #include "apiwrap.h"
 #include "base/parse_helper.h"
 #include "base/qthelp_url.h"
-#include "core/chat_enhanced_settings.h"
 #include "core/deep_links/deep_links_settings.h"
+#include "core/application.h"
+#include "core/chat_enhanced_settings.h"
 #include "data/data_histories.h"
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
@@ -38,6 +39,7 @@ namespace EnhancedSettings {
 namespace {
 
 constexpr auto kWriteJsonTimeout = crl::time(5000);
+constexpr auto kRestartToastDuration = crl::time(5000);
 constexpr auto kBlocklistPageSize = 100;
 
 QString FromUtf8(std::string_view value) {
@@ -291,6 +293,11 @@ const DescriptorList &DescriptorData() {
 			"forward_retain_selection",
 			&tr::lng_settings_forward_retain_selection,
 			"enhanced/forward-retain-selection"),
+		Bool(
+			OptionId::ShowRecentForwardTargets,
+			"show_recent_forward_targets",
+			&tr::lng_settings_show_recent_forward_targets,
+			"enhanced/show-recent-forward-targets"),
 	};
 	return result;
 }
@@ -1001,8 +1008,21 @@ bool ApplyOption(
 	}
 	if (descriptor.restartRequired
 		&& restartNotification == RestartNotification::Show) {
-		controller->showToast(
-			tr::lng_settings_restart_to_apply(tr::now));
+		controller->showToast({
+			.text = tr::lng_settings_restart_to_apply(
+				tr::now,
+				tr::marked
+			).append(' ').append(tr::lng_settings_update_now(
+				tr::now,
+				tr::link)),
+			.filter = [](const ClickHandlerPtr &, Qt::MouseButton button) {
+				if (button == Qt::LeftButton) {
+					Core::Restart();
+				}
+				return false;
+			},
+			.duration = kRestartToastDuration,
+		});
 	}
 	return true;
 }

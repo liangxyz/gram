@@ -90,6 +90,7 @@ enum class OptionId {
 	LlmTranslateExtraParameters,
 	DirectForwardWithoutOpeningChat,
 	ForwardRetainSelection,
+	ShowRecentForwardTargets,
 	Count,
 };
 
@@ -193,6 +194,8 @@ inline constexpr auto DirectForwardWithoutOpeningChat
 	= Key<bool>{ OptionId::DirectForwardWithoutOpeningChat };
 inline constexpr auto ForwardRetainSelection
 	= Key<bool>{ OptionId::ForwardRetainSelection };
+inline constexpr auto ShowRecentForwardTargets
+	= Key<bool>{ OptionId::ShowRecentForwardTargets };
 } // namespace Option
 
 enum class ExtraContextMenuOption : int {

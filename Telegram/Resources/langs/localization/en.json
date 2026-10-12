@@ -60,6 +60,7 @@
     "lng_settings_forward_retain_selection": "Retain selection after forward",
     "lng_settings_forward_retain_selection_desc": "Keep messages selected after regular or no-quote forwarding.",
     "lng_settings_show_scheduled_button": "Always show scheduled button",
+    "lng_settings_show_recent_forward_targets": "Show recent forward targets",
     "lng_settings_voice_chat": "Voice Chat",
     "lng_settings_stereo_mode": "Enable Stereo Mode",
     "lng_settings_pin_voice_chat": "Pin To Top",

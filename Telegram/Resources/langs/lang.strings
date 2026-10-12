@@ -672,6 +672,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_latest_installed" = "Latest version is installed";
 "lng_settings_update_ready" = "New version is ready";
 "lng_settings_update_fail" = "Update check failed :(";
+"lng_settings_update_now" = "Restart now";
 "lng_settings_workmode_tray" = "Show tray icon";
 "lng_settings_workmode_window" = "Show taskbar icon";
 "lng_settings_window_close" = "When window closed";
@@ -8050,6 +8051,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_photo_editor_crop_free" = "Free";
 
 "lng_photo_editor_corners_about" = "Choose how rounded the sticker corners should look.";
+"lng_photo_editor_corners_circle" = "Circle";
 "lng_photo_editor_corners_large" = "Large";
 "lng_photo_editor_corners_medium" = "Medium";
 "lng_photo_editor_corners_small" = "Small";
@@ -9207,7 +9209,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_intro_about2" = "Welcome to the Yurigram app.\nIt's fast and secure.";
 
-"lng_settings_restart_immediately" = "Restart now";
 "lng_settings_force_mobile" = "Force use mobile-like layout";
 "lng_settings_show_similar_on_joined" = "Show similar channels on join message";
 "lng_settings_more_right_action_comments" = "Move comments button to the right";
@@ -9297,6 +9298,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_disable_sync_draft_to_cloud" = "Stop syncing local drafts to cloud";
 "lng_settings_show_phone_number" = "Show Phone Number";
 "lng_settings_show_scheduled_button" = "Always show scheduled button";
+"lng_settings_show_recent_forward_targets" = "Show recent forward targets";
 "lng_settings_voice_chat" = "Voice Chat";
 "lng_settings_stereo_mode" = "Enable Stereo Mode";
 "lng_settings_pin_voice_chat" = "Pin To Top";
